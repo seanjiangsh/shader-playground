@@ -1,0 +1,18 @@
+node_modules
+dist
+
+# pnpm is the only package manager here; a stray npm/yarn lockfile means
+# someone installed with the wrong tool. Keep pnpm-lock.yaml committed.
+package-lock.json
+yarn.lock
+
+# Scenes parked out of the sidebar (see src/_parked/README.md). Untracked on
+# purpose: the repo stays a clean slate to practise in, and finished scenes stay
+# local until you decide to bring one back. Note the flip side — anything in
+# here is NOT backed up by git, so don't leave work you care about parked.
+# `pnpm test:shaders` skips the folder when it's absent, so a fresh clone works.
+src/_parked/
+
+.DS_Store
+*.local
+.vite

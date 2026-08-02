@@ -1,0 +1,14 @@
+# pnpm settings live here (pnpm 11 moved them out of package.json / .npmrc).
+# This is not a monorepo — there is no `packages:` list — the file exists purely
+# to hold the two settings below.
+
+# pnpm refuses to run a dependency's install scripts unless you allow it here.
+# That's a supply-chain guard: a postinstall script is arbitrary code running on
+# your machine. esbuild is Vite's bundler and its postinstall links the right
+# native binary for your OS, so `vite build` needs this one allowed.
+allowBuilds:
+  esbuild: true
+
+# Fail the install loudly if node/pnpm don't match "engines" in package.json,
+# instead of failing mysteriously somewhere in the build.
+engineStrict: true

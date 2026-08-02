@@ -1,0 +1,67 @@
+// Level 4 starter: a multi-pass scene.
+//
+// Copy this to src/scenes/NN-my-scene/scene.ts, add the .glsl files it imports,
+// and it appears in the sidebar like any other scene.
+//
+// The mental model: every pass is an ordinary fragment shader, but it draws
+// into a TEXTURE instead of the screen. Passes run top to bottom, then the
+// scene's own `fragment` runs last and is what you actually see. A pass reads
+// other passes through iChannel0..3, in the order it lists them in `inputs`.
+//
+// See 06-blur-bloom (a chain of passes) and 07-feedback-trails (a pass that
+// reads itself) for worked examples.
+
+import type { ShaderScene } from '../../engine/types';
+import blurSrc from './blur.glsl?raw';
+import fragment from './frag.glsl?raw';
+
+const scene: ShaderScene = {
+  id: 'NN-my-scene',
+  title: 'My multi-pass scene',
+  level: 4,
+  blurb: 'what it explores',
+
+  passes: [
+    {
+      id: 'blur',
+      fragment: blurSrc,
+
+      // Which passes this one reads, bound to iChannel0, iChannel1, …
+      // Naming ITSELF here makes it a feedback pass: the engine allocates two
+      // textures and swaps them, so iChannel0 is always last frame's output.
+      // inputs: ['blur'],
+
+      // Render target size as a fraction of the canvas (default 1).
+      // 0.5 is the standard trick for anything soft: four times fewer pixels,
+      // and the downsample blurs a little for free.
+      // scale: 0.5,
+
+      // 'linear' (default) blends between texels; use 'nearest' when the
+      // texture holds simulation state rather than an image.
+      // filter: 'nearest',
+
+      // A pass can draw real geometry into its texture too, not just a quad:
+      // geometry: 'grid',
+      // gridResolution: 160,
+      // vertex: myVertexSrc,
+    },
+  ],
+
+  // What the FINAL, on-screen fragment reads -> iChannel0, iChannel1, …
+  inputs: ['blur'],
+  fragment,
+};
+
+export default scene;
+
+// Inside any pass, the extra uniforms you get are:
+//
+//   uniform sampler2D iChannel0..3;        // the textures named in `inputs`
+//   uniform vec3 iChannelResolution[4];    // their pixel sizes
+//
+// and iResolution is the size of THIS pass's target, not the canvas — so
+// `fragCoord / iResolution.xy` gives 0..1 uv whatever the scale.
+//
+// Note: this is GLSL ES 1.00, so sampling is texture2D(iChannel0, uv).
+// ShaderToy's texture(...) is the GLSL ES 3.00 spelling; rename it when you
+// paste a multi-pass shader in from there.

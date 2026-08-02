@@ -1,0 +1,75 @@
+// ---------------------------------------------------------------------------
+// PIXI.JS custom scene template.
+//
+// Prereq:  npm install pixi.js
+// Use it:  copy this file to  src/scenes/07-pixi-filter/scene.ts
+//
+// Shows a sprite/quad with a custom Pixi Filter (a fragment shader over a
+// texture) — the exact pattern for a real effects library. Pixi owns the
+// canvas; the raw-WebGL engine steps aside.
+//
+// NOTE: Pixi v8's Filter/Shader API differs from v7. If this doesn't compile
+// against your installed version, check the guide:
+//   https://pixijs.com/8.x/guides/components/filters
+// ---------------------------------------------------------------------------
+import { Application, Graphics, Filter, GlProgram } from 'pixi.js';
+import type { CustomScene, SceneInstance } from '../../engine/types';
+
+const scene: CustomScene = {
+  kind: 'custom',
+  id: '07-pixi-filter',
+  title: 'Pixi: custom filter',
+  level: 2,
+  blurb: 'A Pixi Filter is a fragment shader over a texture — your effects-library path.',
+
+  mount(canvas: HTMLCanvasElement): SceneInstance {
+    let disposed = false;
+    let app: Application | null = null;
+
+    const fragment = /* glsl */ `
+      in vec2 vTextureCoord;
+      out vec4 finalColor;
+      uniform sampler2D uTexture;
+      uniform float uTime;
+      void main() {
+        vec2 uv = vTextureCoord;
+        uv.x += sin(uv.y * 10.0 + uTime) * 0.03;
+        finalColor = texture(uTexture, uv);
+      }`;
+
+    (async () => {
+      const a = new Application();
+      await a.init({ canvas, resizeTo: canvas, antialias: true, background: '#0b0e14' });
+      if (disposed) { a.destroy(); return; }
+      app = a;
+
+      const box = new Graphics().rect(0, 0, 300, 300).fill('#6ea8fe');
+      box.position.set(120, 120);
+
+      const filter = new Filter({
+        glProgram: GlProgram.from({
+          vertex: undefined, // Pixi supplies a default fullscreen-filter vertex
+          fragment,
+        }),
+        resources: { timeUniforms: { uTime: { value: 0, type: 'f32' } } },
+      });
+      box.filters = [filter];
+      a.stage.addChild(box);
+
+      a.ticker.add(() => {
+        // @ts-expect-error resource shape depends on your Pixi version
+        filter.resources.timeUniforms.uniforms.uTime += a.ticker.deltaMS / 1000;
+      });
+    })();
+
+    return {
+      dispose() {
+        disposed = true;
+        app?.destroy(true);
+        app = null;
+      },
+    };
+  },
+};
+
+export default scene;
