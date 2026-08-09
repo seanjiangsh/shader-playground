@@ -113,9 +113,7 @@ function makeGrid(gl: WebGLRenderingContext, n: number): Geo {
     use32 ? new Uint32Array(indices) : new Uint16Array(indices),
     gl.STATIC_DRAW,
   );
-  (index as WebGLBuffer & { __type?: number }).__type = use32
-    ? gl.UNSIGNED_INT
-    : gl.UNSIGNED_SHORT;
+  (index as WebGLBuffer & { __type?: number }).__type = use32 ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT;
 
   return {
     buffer,
@@ -304,7 +302,9 @@ export class Renderer {
       for (const input of step.inputs) {
         if (!known.has(input)) {
           const list = [...known].join(', ') || '(none)';
-          throw new Error(`pass "${step.id}" reads unknown input "${input}". Known passes: ${list}`);
+          throw new Error(
+            `pass "${step.id}" reads unknown input "${input}". Known passes: ${list}`,
+          );
         }
       }
     }

@@ -64,7 +64,7 @@ pnpm test:shaders    # also runs as part of `pnpm build`
 
 This compiles **and links** every pass of every scene — parked ones included —
 through `glslangValidator`, Khronos's reference GLSL compiler. Linking is the
-part that matters: some rules govern the *relationship* between the vertex and
+part that matters: some rules govern the _relationship_ between the vertex and
 fragment stage, so each shader can compile alone and still fail together. That's
 the trap that produced the `iFrame` precision bug, which Chrome ran happily and
 Firefox rejected.
@@ -79,7 +79,7 @@ ERROR: fragment:13: '' :  syntax error, unexpected SEMICOLON, expecting RIGHT_PA
 The scenes are loaded through Vite's SSR loader and assembled by
 `src/engine/shaderSource.ts` — the very module the engine uses — so what gets
 validated is byte-for-byte what WebGL receives, injected uniforms and all.
-It enforces the *spec*, though; browsers add quirks on top, so this is necessary
+It enforces the _spec_, though; browsers add quirks on top, so this is necessary
 rather than sufficient. Keep opening Firefox occasionally.
 
 ## The uniforms your shaders get (ShaderToy-compatible)
@@ -146,7 +146,7 @@ Three things are worth knowing before you write one:
 
 `scale` sets the target size as a fraction of the canvas. Anything soft — blur,
 bloom, glow — should run at `0.5`, both for the pixel count and because the
-downsample blurs for free. Inside a pass, `iResolution` is *that pass's* target
+downsample blurs for free. Inside a pass, `iResolution` is _that pass's_ target
 size, so `fragCoord / iResolution.xy` still gives you 0..1 uv, and
 `iChannelResolution[n]` tells you the size of the texture you're reading (which
 is how a blur converts a radius in pixels into a step in uv).
@@ -180,15 +180,15 @@ carries straight over — only the plumbing (ShaderMaterial / Filter) is new.
 
 ## Roadmap (maps to the learning phases)
 
-| Level | Folder pattern | Focus |
-|-------|----------------|-------|
-| 1 | `01-*` | GLSL basics, color per pixel, `iTime` |
-| 2 | `02..04-*` | SDFs, patterns, noise, reading inputs · *parked* |
-| 3 | `05-*` | vertex shaders, geometry, the perspective divide · *parked* |
-| 4 | `06..07-*` | multi-pass / framebuffers: blur, bloom, feedback · *parked* |
-| — | `_templates` | graduate to Pixi / Three when GLSL is second nature |
+| Level | Folder pattern | Focus                                                       |
+| ----- | -------------- | ----------------------------------------------------------- |
+| 1     | `01-*`         | GLSL basics, color per pixel, `iTime`                       |
+| 2     | `02..04-*`     | SDFs, patterns, noise, reading inputs · _parked_            |
+| 3     | `05-*`         | vertex shaders, geometry, the perspective divide · _parked_ |
+| 4     | `06..07-*`     | multi-pass / framebuffers: blur, bloom, feedback · _parked_ |
+| —     | `_templates`   | graduate to Pixi / Three when GLSL is second nature         |
 
-Next after level 4: point the same machinery at *simulation* rather than
+Next after level 4: point the same machinery at _simulation_ rather than
 looks — Game of Life (`filter: 'nearest'`, one texel per cell), then
 reaction–diffusion. The engine already does everything they need; only the
 shader changes.

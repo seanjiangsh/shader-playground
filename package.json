@@ -11,12 +11,15 @@
   },
   "scripts": {
     "dev": "vite",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test:shaders": "node scripts/check-shaders.mjs",
     "build": "tsc --noEmit && node scripts/check-shaders.mjs && vite build",
     "preview": "vite preview"
   },
   "devDependencies": {
     "glslang-validator-prebuilt-predownloaded": "^0.0.2",
+    "prettier": "^3.9.6",
     "typescript": "^5.5.4",
     "vite": "^5.4.2"
   }

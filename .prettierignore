@@ -1,0 +1,8 @@
+# Generated or vendored — never reformat these.
+node_modules
+dist
+pnpm-lock.yaml
+
+# Prettier has no GLSL parser, so it skips .glsl on its own. Listed here as a
+# reminder: shader formatting is yours to keep tidy by hand.
+*.glsl

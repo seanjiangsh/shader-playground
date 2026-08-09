@@ -34,7 +34,8 @@ steps out of the way. `three-scene.ts.txt` and `pixi-scene.ts.txt` here are
 ready-to-use starting points.
 
 To activate one:
-1. `pnpm add three`  (or `pnpm add pixi.js`)
+
+1. `pnpm add three` (or `pnpm add pixi.js`)
 2. copy `three-scene.ts.txt` to `06-three-cube/scene.ts`
 3. that's it — it shows up in the sidebar with a `lib` badge.
 
