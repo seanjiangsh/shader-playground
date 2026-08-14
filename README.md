@@ -40,18 +40,19 @@ src/
   scenes/
     index.ts        auto-discovers every scene folder (you never edit this)
     01-gradient/    L1 · color per pixel + time
+    02-shape-sdf/   L2 · signed distance fields — a starter with exercises
     _templates/     multi-pass starter + ready-made Pixi & Three scenes
   _parked/          finished scenes, out of the sidebar until you want them
   ui/gallery.ts     the sidebar
   main.ts           app shell: swaps scenes, hash routing, keyboard nav
 ```
 
-Only `01-gradient` is active right now — the rest are parked in `src/_parked/`
+Only the levels you've reached are active — the rest are parked in `src/_parked/`
 so the sidebar stays a clean slate while you work through the basics yourself.
 Bring one back whenever you want to compare notes:
 
 ```bash
-mv src/_parked/02-shape-sdf src/scenes/
+mv src/_parked/03-noise src/scenes/
 ```
 
 See `src/_parked/README.md` for what's in there and a suggested order.
