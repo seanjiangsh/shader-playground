@@ -19,19 +19,17 @@
 // appear in the sidebar. Try not to open it until yours runs.
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-  // Centred, aspect-corrected coordinates: the `p` you met in 01. Both axes are
-  // divided by the height, so distances mean the same thing in x and y and a
-  // circle comes out round. p.y runs -1..1; p.x runs -aspect..+aspect.
-  vec2 p = (2.0 * fragCoord - iResolution.xy) / iResolution.y;
+  // normalise by the short axis, so r is directly a fraction of it
+  float minAxis = min(iResolution.x, iResolution.y);
+  vec2  p  = (2.0 * fragCoord - iResolution.xy) / minAxis;
+  float px = 2.0 / minAxis; // one screen pixel in p units; must use the same divisor as p
 
-  // One screen pixel, measured in p units. Handy for edge widths that stay
-  // crisp at any canvas size — see exercise 2.
-  float px = 2.0 / iResolution.y;
+  float r = 0.6;
+  float d = length(p) - r;
+  // float fill = step(0.0, -d);
+  float fill = 1.0 - smoothstep(-px, px, d);
 
-  // The field. Distance from p to the origin, and nothing else yet.
-  float d = length(p);
-
-  vec3 color = vec3(d);
+  vec3 color = vec3(fill);
 
   fragColor = vec4(color, 1.0);
 }
