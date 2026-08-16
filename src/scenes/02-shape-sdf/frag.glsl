@@ -1,4 +1,4 @@
-// Level 2 — signed distance fields. STARTER: the exercises are yours to fill in.
+// Level 2 — signed distance fields. Exercises 1 and 2 done; 3 onward below.
 //
 // The idea in one sentence: instead of asking "is this pixel inside the shape?",
 // you compute HOW FAR this pixel is from the shape's edge.
@@ -10,24 +10,44 @@
 // off corners where two shapes meet, and repeat a shape across the screen — all
 // with arithmetic, and no extra geometry.
 //
-// Right now this draws the rawest distance field there is: distance from the
-// centre, straight to the screen. Black at the middle, brighter as you move
-// out, clipped to white past 1.0. Not a shape yet. Work down the exercises and
-// it becomes one.
+// Where this is now: `d` is a real circle SDF, and the greyscale on screen is a
+// direct readout of its SIGN — black where d is negative (inside), white where
+// it's positive (outside), with a one-pixel ramp across the crossing. Nothing is
+// flipped on purpose, so the picture reads straight off the line above rather
+// than inverting it in your head. The cost of that choice is that `fill` is
+// really "outside-ness"; when you start mixing colours, remember the shape
+// colour belongs on the 0 side.
 //
 // A worked solution is parked at src/_parked/02-shape-sdf-reference/ — it won't
 // appear in the sidebar. Try not to open it until yours runs.
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-  // normalise by the short axis, so r is directly a fraction of it
+  // Normalise by the SHORT axis, so it always spans -1..1 and r reads directly
+  // as a fraction of it: r = 1.0 touches the short edges, r = 0.6 makes the
+  // circle 60% of the short side. Dividing by iResolution.y instead would fit
+  // to the height only; min() here is CSS object-fit: contain, max() is cover.
   float minAxis = min(iResolution.x, iResolution.y);
   vec2  p  = (2.0 * fragCoord - iResolution.xy) / minAxis;
   float px = 2.0 / minAxis; // one screen pixel in p units; must use the same divisor as p
 
+  // The field: distance to the circle's edge, signed. Built into d itself, not
+  // into the colour, because everything downstream reads d and nothing reads
+  // the colour line.
   float r = 0.6;
   float d = length(p) - r;
-  // float fill = step(0.0, -d);
-  float fill = 1.0 - smoothstep(-px, px, d);
+
+  // Three ways to turn the sign into a mask, cheapest last. All of them read
+  // 0 inside and 1 outside, matching the convention at the top of the file.
+
+  // step will have jagged edge
+  // float fill = step(0.0, d);
+
+  // smoothstep in the +-pixel range to have antialiasing
+  // float fill = smoothstep(-px, px, d);
+
+  // cheapest, and exactly right: a one-pixel ramp centred on the edge.
+  // The 0.5 is what centres it — exercise 2 below has the derivation.
+  float fill = clamp(0.5 + d / px, 0.0, 1.0);
 
   vec3 color = vec3(fill);
 
@@ -38,22 +58,44 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 // EXERCISES — roughly in order. Each builds on the last.
 // ---------------------------------------------------------------------------
 //
-// 1. MAKE IT A CIRCLE.
-//    `length(p)` is distance from the centre. Subtract a radius and you have
-//    the signed distance to a circle's edge: zero ON the circle, negative
-//    inside, positive outside. Try r = 0.4.
-//    Everything inside now goes negative, and negative colours clamp to black —
-//    so a black disc appears. That black disc IS the inside of your shape.
+// 1. MAKE IT A CIRCLE.  [done]
+//    `length(p)` is distance from the centre; subtracting a radius gives the
+//    signed distance to the circle's edge. The move that mattered: put the
+//    subtraction in `d`, not in the colour.
 //
-// 2. TURN THE SIGN INTO A FILL.
-//    You want "1.0 where d < 0, 0.0 where d > 0".
-//      float fill = step(0.0, -d);              <- try this first
-//    Look closely at the edge: it's jagged, because every pixel is fully in or
-//    fully out. Now soften it across roughly two pixels:
-//      float fill = 1.0 - smoothstep(0.0, 2.0 * px, d);
-//    Then mix a background and a shape colour by `fill`. Compare the two edges
-//    side by side — this is anti-aliasing, and it's why the distance is worth
-//    more than a boolean.
+// 2. TURN THE SIGN INTO A MASK.  [done]
+//    step() first, to see the staircase that comes of every pixel being fully in
+//    or fully out, then a ramp about a pixel wide to soften it.
+//
+//    WHERE THE 0.5 COMES FROM. Work in pixels: let t = d / px, the signed
+//    distance measured in screen pixels. A pixel is SAMPLED at its centre but
+//    COVERS the range t-0.5 .. t+0.5, so for a straight edge the fraction of the
+//    pixel lying outside the shape is
+//
+//        t <= -0.5    pixel wholly inside    -> 0
+//        t >= +0.5    pixel wholly outside   -> 1
+//        in between   -> t + 0.5             (a straight line between the two)
+//
+//    Read that back as an expression and it is exactly
+//      clamp(0.5 + d / px, 0.0, 1.0)
+//    a ramp one pixel wide, centred on the edge. Not an approximation that
+//    happens to look right: it IS the coverage of a straight edge, and the best
+//    a single sample per pixel can do. It's also cheaper than smoothstep.
+//
+//    Both ways of getting it wrong are about where the ramp SITS, not how wide
+//    it is. Measured on the pixel that should read fully outside (255):
+//      clamp(d / px, ...)               ramp 0..1px, half a pixel outward.
+//                                       Gives 0 at the true edge where 0.5 is
+//                                       honest, and 128/255 here. Half a pixel
+//                                       of fat on every shape.
+//      1.0 - smoothstep(0.0, 2*px, d)   ramp entirely outside the shape:
+//                                       a full pixel of fat.
+//    smoothstep(-px, px, d) is centred, so unbiased, but spans two pixels rather
+//    than one — that extra pixel is why its edges look slightly softer.
+//
+//    Still open, if you want it: mix real colours instead of greyscale, e.g.
+//      vec3 color = mix(shapeColour, background, fill);
+//    (shape on the 0 side, since fill is outside-ness).
 //
 // 3. SEE THE FIELD ITSELF.
 //    Add `color += 0.06 * cos(d * 50.0);` and the invisible field turns into
