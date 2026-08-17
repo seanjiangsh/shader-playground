@@ -10,16 +10,24 @@
 // off corners where two shapes meet, and repeat a shape across the screen — all
 // with arithmetic, and no extra geometry.
 //
-// Where this is now: `d` is a real circle SDF, and the greyscale on screen is a
-// direct readout of its SIGN — black where d is negative (inside), white where
-// it's positive (outside), with a one-pixel ramp across the crossing. Nothing is
-// flipped on purpose, so the picture reads straight off the line above rather
-// than inverting it in your head. The cost of that choice is that `fill` is
-// really "outside-ness"; when you start mixing colours, remember the shape
-// colour belongs on the 0 side.
+// Where this is now: `d` is a real circle SDF and `fill` is a mask built from
+// the SIGN of d — 0 where d is negative (inside), 1 where it's positive
+// (outside), with a one-pixel ramp across the crossing. Nothing is flipped on
+// purpose, so the picture reads straight off the line above instead of asking
+// you to invert it in your head. The palette keeps that reading by putting the
+// dark color inside. The one consequence to hold on to: `fill` really means
+// "outside-ness", which is why shapeColor is the FIRST argument to mix().
 //
 // A worked solution is parked at src/_parked/02-shape-sdf-reference/ — it won't
 // appear in the sidebar. Try not to open it until yours runs.
+
+// The palette, at global scope. GLSL ES 1.00 permits that only because both
+// initialisers are constant expressions; a global initialised from a uniform or
+// a function call would not compile. Saying `const` states that intent and lets
+// the compiler treat them as literals:
+//    const vec3 shapeColor = vec3(0.0);
+vec3 shapeColor = vec3(0.0, 0.0, 0.0);
+vec3 bgColor = vec3(0.149,0.141,0.912);
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // Normalise by the SHORT axis, so it always spans -1..1 and r reads directly
@@ -31,8 +39,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   float px = 2.0 / minAxis; // one screen pixel in p units; must use the same divisor as p
 
   // The field: distance to the circle's edge, signed. Built into d itself, not
-  // into the colour, because everything downstream reads d and nothing reads
-  // the colour line.
+  // into the color, because everything downstream reads d and nothing reads
+  // the color line.
   float r = 0.6;
   float d = length(p) - r;
 
@@ -49,7 +57,11 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // The 0.5 is what centres it — exercise 2 below has the derivation.
   float fill = clamp(0.5 + d / px, 0.0, 1.0);
 
-  vec3 color = vec3(fill);
+  // mix(a, b, t) is a + (b - a) * t: t = 0 gives a, t = 1 gives b. Since fill is
+  // outside-ness, shapeColor takes the 0 end and bgColor the 1 end. The ramp
+  // pixels land in between, and that partial blend IS the anti-aliasing —
+  // coverage turned into color by a linear interpolation.
+  vec3 color = mix(shapeColor, bgColor, fill);
 
   fragColor = vec4(color, 1.0);
 }
@@ -61,7 +73,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 // 1. MAKE IT A CIRCLE.  [done]
 //    `length(p)` is distance from the centre; subtracting a radius gives the
 //    signed distance to the circle's edge. The move that mattered: put the
-//    subtraction in `d`, not in the colour.
+//    subtraction in `d`, not in the color.
 //
 // 2. TURN THE SIGN INTO A MASK.  [done]
 //    step() first, to see the staircase that comes of every pixel being fully in
@@ -93,9 +105,11 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    smoothstep(-px, px, d) is centred, so unbiased, but spans two pixels rather
 //    than one — that extra pixel is why its edges look slightly softer.
 //
-//    Still open, if you want it: mix real colours instead of greyscale, e.g.
-//      vec3 color = mix(shapeColour, background, fill);
-//    (shape on the 0 side, since fill is outside-ness).
+//    Done: greyscale became a two-color palette with
+//      vec3 color = mix(shapeColor, bgColor, fill);
+//    shapeColor first, because fill is outside-ness. Keeping the shape dark
+//    preserves the "dark = negative = inside" reading the greyscale had, so the
+//    picture is still a view of the field rather than just a picture of a disc.
 //
 // 3. SEE THE FIELD ITSELF.
 //    Add `color += 0.06 * cos(d * 50.0);` and the invisible field turns into
