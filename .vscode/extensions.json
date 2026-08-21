@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    // GLSL ES 100 (WebGL 1) language support: hover types on your own variables,
+    // completion, rename, go-to-definition. The only extension I found that
+    // targets ES 100 specifically, which is what this project writes.
+    "raczzalan.webgl-glsl-editor",
+    // Uses .prettierrc at the repo root, so formatting matches `pnpm format`.
+    "esbenp.prettier-vscode"
+  ]
+}
