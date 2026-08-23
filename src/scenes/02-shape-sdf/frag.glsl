@@ -10,12 +10,12 @@
 // off corners where two shapes meet, and repeat a shape across the screen — all
 // with arithmetic, and no extra geometry.
 //
-// Where this is now: `d` is a real circle SDF and `fill` is a mask built from
-// the SIGN of d — 0 where d is negative (inside), 1 where it's positive
+// Where this is now: `distToEdge` is a real circle SDF and `outsideMask` is a mask built from
+// the SIGN of distToEdge — 0 where distToEdge is negative (inside), 1 where it's positive
 // (outside), with a one-pixel ramp across the crossing. Nothing is flipped on
 // purpose, so the picture reads straight off the line above instead of asking
 // you to invert it in your head. The palette keeps that reading by putting the
-// dark color inside. The one consequence to hold on to: `fill` really means
+// dark color inside. The one consequence to hold on to: `outsideMask` really means
 // "outside-ness", which is why shapeColor is the FIRST argument to mix().
 //
 // A worked solution is parked at src/_parked/02-shape-sdf-reference/ — it won't
@@ -29,16 +29,16 @@
 vec3 shapeColor = vec3(0.0, 0.0, 0.0);
 vec3 bgColor = vec3(0.149,0.141,0.912);
 
-float sdCircle(in vec2 p, in float r)
+float sdCircle(in vec2 pos, in float radius)
 {
   // The easy one: distance from the origin, shifted so that 0 lands on the rim.
   // sdBox below is the same idea, only harder to see.
-  return length(p) - r;
+  return length(pos) - radius;
 }
 
-// b is the box's HALF-size, measured out from the centre. b = vec2(0.6, 0.4) is
-// a box 1.2 wide and 0.8 tall in p units — NOT 0.6 x 0.4. That catches everyone
-// once, and it's why an over-large b fills the whole screen.
+// halfSize is the box's HALF-size, measured out from the centre. halfSize = vec2(0.6, 0.4) is
+// a box 1.2 wide and 0.8 tall in pos units — NOT 0.6 x 0.4. That catches everyone
+// once, and it's why an over-large halfSize fills the whole screen.
 //
 // The four regions the function has to handle, after folding:
 //
@@ -48,17 +48,17 @@ float sdCircle(in vec2 p, in float r)
 //     -------+-------+-------
 //     corner | face  | corner
 //
-float sdBox(in vec2 p, in vec2 b)
+float sdBox(in vec2 pos, in vec2 halfSize)
 {
   // 1. FOLD the plane into the +x +y quadrant. A box is symmetric about both
   //    axes, so (-0.7, -0.2) is exactly as far from it as (0.7, 0.2). Mirroring
   //    is free and leaves the rest of the function reasoning about ONE corner
   //    rather than four.
-  vec2 q = abs(p);
+  vec2 foldedPos = abs(pos);
 
   // 2. How far PAST the edge are we, on each axis independently?
   //    positive = outside the box on that axis, negative = still inside it.
-  vec2 overshoot = q - b;
+  vec2 overshoot = foldedPos - halfSize;
 
   // 3. OUTSIDE distance. Zero out any axis we are still inside, then take the
   //    length of what remains:
@@ -68,63 +68,63 @@ float sdBox(in vec2 p, in vec2 b)
   //                        distance to the corner point itself
   //    That second case is what makes the field correct around corners, which
   //    is what later lets glows and smooth unions behave there.
-  float outside = length(max(overshoot, 0.0));
+  float outsideDist = length(max(overshoot, 0.0));
 
   // 4. INSIDE distance. In here both components are negative, and the one
   //    CLOSEST to zero is the nearest edge — max() picks it. It is already
   //    negative, which is the sign an SDF wants inside. min(..., 0.0) switches
   //    this term off whenever we are outside.
-  float inside = min(max(overshoot.x, overshoot.y), 0.0);
+  float insideDist = min(max(overshoot.x, overshoot.y), 0.0);
 
   // At most one of the two is non-zero for any pixel, so adding them is just a
   // branchless way of saying "whichever case applies".
-  return outside + inside;
+  return outsideDist + insideDist;
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-  // Normalise by the SHORT axis, so it always spans -1..1 and r reads directly
-  // as a fraction of it: r = 1.0 touches the short edges, r = 0.6 makes the
+  // Normalise by the SHORT axis, so it always spans -1..1 and radius reads directly
+  // as a fraction of it: radius = 1.0 touches the short edges, radius = 0.6 makes the
   // circle 60% of the short side. Dividing by iResolution.y instead would fit
   // to the height only; min() here is CSS object-fit: contain, max() is cover.
-  float minAxis = min(iResolution.x, iResolution.y);
-  vec2  p  = (2.0 * fragCoord - iResolution.xy) / minAxis;
-  float px = 2.0 / minAxis; // one screen pixel in p units; must use the same divisor as p
+  float shortSide = min(iResolution.x, iResolution.y);
+  vec2  pos       = (2.0 * fragCoord - iResolution.xy) / shortSide;
+  float onePixel  = 2.0 / shortSide; // one screen pixel in pos units; must use the same divisor as pos
 
-  // The field: distance to the shape's edge, signed. Built into d itself, not
-  // into the color, because everything downstream reads d and nothing reads
+  // The field: distance to the shape's edge, signed. Built into distToEdge itself, not
+  // into the color, because everything downstream reads distToEdge and nothing reads
   // the color line.
 
   // circle
-  float r = 0.6;
-  // float d = sdCircle(p, r);
+  float radius = 0.6;
+  // float distToEdge = sdCircle(pos, radius);
 
-  // rect (box) — b is the HALF-size, so this is 1.2 x 0.8 in p units.
+  // rect (box) — b is the HALF-size, so this is 1.2 x 0.8 in pos units.
   vec2 halfSize = vec2(0.6, 0.4);
-  float d = sdBox(p, halfSize);
+  float distToEdge = sdBox(pos, halfSize);
 
   // Three ways to turn the sign into a mask, cheapest last. All of them read
   // 0 inside and 1 outside, matching the convention at the top of the file.
 
   // step will have jagged edge
-  // float fill = step(0.0, d);
+  // float outsideMask = step(0.0, distToEdge);
 
   // smoothstep in the +-pixel range to have antialiasing
-  // float fill = smoothstep(-px, px, d);
+  // float outsideMask = smoothstep(-onePixel, onePixel, distToEdge);
 
   // cheapest, and exactly right: a one-pixel ramp centred on the edge.
   // The 0.5 is what centres it — exercise 2 below has the derivation.
-  float fill = clamp(0.5 + d / px, 0.0, 1.0);
+  float outsideMask = clamp(0.5 + distToEdge / onePixel, 0.0, 1.0);
 
-  // mix(a, b, t) is a + (b - a) * t: t = 0 gives a, t = 1 gives b. Since fill is
+  // mix(a, b, t) is a + (b - a) * t: t = 0 gives a, t = 1 gives b. Since outsideMask is
   // outside-ness, shapeColor takes the 0 end and bgColor the 1 end. The ramp
   // pixels land in between, and that partial blend IS the anti-aliasing —
   // coverage turned into color by a linear interpolation.
-  vec3 color = mix(shapeColor, bgColor, fill);
+  vec3 color = mix(shapeColor, bgColor, outsideMask);
 
   // Exercise 3: the field made visible. cos() of the distance draws a contour
-  // every time d advances by 2*PI/10, so you are looking at a topographic map
+  // every time distToEdge advances by 2*PI/10, so you are looking at a topographic map
   // of the very number the mask above was built from.
-  color += 0.06 * cos(d * 10.0);
+  color += 0.06 * cos(distToEdge * 10.0);
 
   fragColor = vec4(color, 1.0);
 }
@@ -134,15 +134,15 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 // ---------------------------------------------------------------------------
 //
 // 1. MAKE IT A CIRCLE.  [done]
-//    `length(p)` is distance from the centre; subtracting a radius gives the
-//    signed distance to the circle's edge. The move that mattered: put the
-//    subtraction in `d`, not in the color.
+//    `length(pos)` is distance from the centre; subtracting a radius gives the
+//    signed distance to the circle'cellSize edge. The move that mattered: put the
+//    subtraction in `distToEdge`, not in the color.
 //
 // 2. TURN THE SIGN INTO A MASK.  [done]
 //    step() first, to see the staircase that comes of every pixel being fully in
 //    or fully out, then a ramp about a pixel wide to soften it.
 //
-//    WHERE THE 0.5 COMES FROM. Work in pixels: let t = d / px, the signed
+//    WHERE THE 0.5 COMES FROM. Work in pixels: let t = distToEdge / onePixel, the signed
 //    distance measured in screen pixels. A pixel is SAMPLED at its centre but
 //    COVERS the range t-0.5 .. t+0.5, so for a straight edge the fraction of the
 //    pixel lying outside the shape is
@@ -152,30 +152,30 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //        in between   -> t + 0.5             (a straight line between the two)
 //
 //    Read that back as an expression and it is exactly
-//      clamp(0.5 + d / px, 0.0, 1.0)
+//      clamp(0.5 + distToEdge / onePixel, 0.0, 1.0)
 //    a ramp one pixel wide, centred on the edge. Not an approximation that
 //    happens to look right: it IS the coverage of a straight edge, and the best
-//    a single sample per pixel can do. It's also cheaper than smoothstep.
+//    a single sample per pixel can do. It'cellSize also cheaper than smoothstep.
 //
 //    Both ways of getting it wrong are about where the ramp SITS, not how wide
 //    it is. Measured on the pixel that should read fully outside (255):
-//      clamp(d / px, ...)               ramp 0..1px, half a pixel outward.
+//      clamp(distToEdge / onePixel, ...)               ramp 0..1px, half a pixel outward.
 //                                       Gives 0 at the true edge where 0.5 is
 //                                       honest, and 128/255 here. Half a pixel
 //                                       of fat on every shape.
-//      1.0 - smoothstep(0.0, 2*px, d)   ramp entirely outside the shape:
+//      1.0 - smoothstep(0.0, 2*onePixel, distToEdge)   ramp entirely outside the shape:
 //                                       a full pixel of fat.
-//    smoothstep(-px, px, d) is centred, so unbiased, but spans two pixels rather
+//    smoothstep(-onePixel, onePixel, distToEdge) is centred, so unbiased, but spans two pixels rather
 //    than one — that extra pixel is why its edges look slightly softer.
 //
 //    Done: greyscale became a two-color palette with
-//      vec3 color = mix(shapeColor, bgColor, fill);
-//    shapeColor first, because fill is outside-ness. Keeping the shape dark
+//      vec3 color = mix(shapeColor, bgColor, outsideMask);
+//    shapeColor first, because outsideMask is outside-ness. Keeping the shape dark
 //    preserves the "dark = negative = inside" reading the greyscale had, so the
 //    picture is still a view of the field rather than just a picture of a disc.
 //
 // 3. SEE THE FIELD ITSELF.  [done]
-//    `color += 0.06 * cos(d * 10.0);` turns the invisible field into contour
+//    `color += 0.06 * cos(distToEdge * 10.0);` turns the invisible field into contour
 //    rings. Worth having done: from here on you are reasoning about a landscape
 //    you can't otherwise see, and around a box those contours show you the
 //    rounded corners the distance function produces.
@@ -183,18 +183,18 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 // 4. ADD A SECOND SHAPE — A BOX.  [done]
 //    Written out step by step in sdBox above: fold, overshoot, outside term,
 //    inside term. The gotcha that cost time was not the maths but the argument:
-//    `b` is the box's HALF-size, so vec2(2.0) reaches far past the screen edge
-//    (p only reaches 1.0 on the short axis), every pixel reads as inside, and
-//    you get a flat fill with no visible box at all.
+//    `halfSize` is measured from the centre out, so vec2(2.0) reaches far past the screen edge
+//    (pos only reaches 1.0 on the short axis), every pixel reads as inside, and
+//    you get a flat outsideMask with no visible box at all.
 //    Still to do here: keep BOTH shapes live at once, which is what exercise 5
 //    needs — sdCircle is written and currently commented out at the call site.
 //
-// 5. COMBINE THEM. This is where SDFs get fun, and it's three operators:
+// 5. COMBINE THEM. This is where SDFs get fun, and it'cellSize three operators:
 //      union         min(a, b)
 //      intersection  max(a, b)
 //      subtraction   max(a, -b)      <- b punches a hole in a
-//    Offset a shape by subtracting from p first: sdCircle(p - vec2(0.4, 0.0), r)
-//    moves it right. Note it's MINUS to move in the PLUS direction — you're
+//    Offset a shape by subtracting from pos first: sdCircle(pos - vec2(0.4, 0.0), radius)
+//    moves it right. Note it'cellSize MINUS to move in the PLUS direction — you're
 //    moving the coordinate system, not the shape.
 //
 // 6. SOFTEN THE JOIN.
@@ -207,10 +207,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    Animate k with iTime and watch them merge and separate.
 //
 // 7. REPEAT IT, free of charge.
-//    The centred-repeat line from 01's notes works here unchanged:
-//      float s = 0.7;
-//      vec2 q = p - s * floor(p / s + 0.5);
-//    Compute your circle on `q` instead of `p` and one circle becomes a grid of
+//    The centred-repeat line from 01'cellSize notes works here unchanged:
+//      float cellSize = 0.7;
+//      vec2 cellPos = pos - cellSize * floor(pos / cellSize + 0.5);
+//    Compute your circle on `cellPos` instead of `pos` and one circle becomes a grid of
 //    them. Same cost per pixel, however many you "draw".
 //
 // STUCK? `pnpm test:shaders` will tell you about syntax and type errors without

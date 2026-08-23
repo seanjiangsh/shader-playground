@@ -10,37 +10,37 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // Two names for the same pixel. They answer different questions, so it's
   // normal to compute both and use whichever the next line needs.
   // uv: "where am I across the picture" — gradients, tiling, sampling a texture.
-  vec2 uv = fragCoord / iResolution.xy;                          // 0..1 — image space
-  // p: "where am I in space" — distance, shapes, rotation. BOTH axes are divided
+  vec2 uv  = fragCoord / iResolution.xy;                          // 0..1 — image space
+  // pos: "where am I in space" — distance, shapes, rotation. BOTH axes are divided
   // by the height, so one unit across equals one unit up and circles stay round.
-  vec2 p  = (2.0 * fragCoord - iResolution.xy) / iResolution.y;  // centred, square units
+  vec2 pos = (2.0 * fragCoord - iResolution.xy) / iResolution.y;  // centred, square units
 
   // fract() wraps once per 1.0 of input, so the tile count is the input's RANGE
   // times `tiles` — not `tiles` on its own. uv spans exactly 1.0 per axis, so
   // this gives exactly 2 x 2 tiles, each stretched by the canvas aspect ratio.
   const float tiles = 2.0;
-  vec2 source = fract(uv * tiles);
-  // Swap in p and the same `tiles` gives 4 rows and 4 x aspect columns, because
-  // p spans 2.0 vertically. Those tiles come out square rather than stretched,
+  vec2 cellPos = fract(uv * tiles);
+  // Swap in pos and the same `tiles` gives 4 rows and 4 x aspect columns, because
+  // pos spans 2.0 vertically. Those tiles come out square rather than stretched,
   // and a seam lands on 0.0 — the centre of the screen — since 0 is an integer.
-  // vec2 source = fract(p * tiles);
+  // vec2 cellPos = fract(pos * tiles);
 
-  // source.x -> red rising left to right WITHIN each tile,
-  // source.y -> green rising bottom to top within each tile,
+  // cellPos.x -> red rising left to right WITHIN each tile,
+  // cellPos.y -> green rising bottom to top within each tile,
   // and a blue channel that breathes over time with iTime.
-  vec3 color = vec3(source.x, source.y, 0.5 + 0.5 * sin(iTime));
+  vec3 color = vec3(cellPos.x, cellPos.y, 0.5 + 0.5 * sin(iTime));
 
-  // shorthand for RG by source.x/source.y
-  // vec3 color = vec3(source, 0.5 + 0.5 * sin(iTime));
+  // shorthand for RG by cellPos.x/cellPos.y
+  // vec3 color = vec3(cellPos, 0.5 + 0.5 * sin(iTime));
 
   // Output: red, green, blue, alpha.
   fragColor = vec4(color, 1.0);
 }
 
 // TRY THIS:
-//  • uncomment the p line above — the seam jumps to the middle of the screen
+//  • uncomment the pos line above — the seam jumps to the middle of the screen
 //  • mirror instead of wrapping, for tiling with no hard seams:
-//      vec2 source = abs(fract(uv * tiles) * 2.0 - 1.0);
+//      vec2 cellPos = abs(fract(uv * tiles) * 2.0 - 1.0);
 //  • colour by WHICH tile instead of position inside it — fract gives you the
 //    first, floor gives you the second, and you'll want both in level 2:
 //      vec2 cell = floor(uv * tiles);
