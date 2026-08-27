@@ -10,8 +10,9 @@
 // off corners where two shapes meet, and repeat a shape across the screen — all
 // with arithmetic, and no extra geometry.
 //
-// Where this is now: `distToEdge` is the union of a circle and a box, and
-// `outsideMask` is built from its SIGN — 0 where distToEdge is negative
+// Where this is now: `distToEdge` combines a circle and a box (currently their
+// intersection; union and a morph sit commented beside it), and `outsideMask`
+// is built from its SIGN — 0 where distToEdge is negative
 // (inside), 1 where it's positive (outside), with a one-pixel ramp across the
 // crossing. Nothing is flipped on purpose, so the picture reads straight off
 // the line above instead of asking you to invert it in your head. The palette
@@ -93,35 +94,72 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // one screen pixel, in pos units; must use the same divisor as pos
   float onePixel  = 2.0 / shortSide;
 
-  // TWO fields now, one per shape. Nothing downstream changes: the mask, the mix
-  // and the contour rings all still read the single `distToEdge` below. That is
-  // the payoff of having built the field into a variable back in exercise 1 —
-  // adding a shape stays a local edit.
+  // TWO fields now, one per shape. Nothing downstream changes: the mask, the
+  // colour mix and the contour rings all still read the single `distToEdge`
+  // below. That is the payoff of having built the field into a variable back in
+  // exercise 1 — adding a shape, or changing how they combine, stays local.
 
   // Offsetting a shape moves the COORDINATE SYSTEM, not the shape. sdCircle only
   // knows how to draw a circle at the origin, so what it wants handed to it is
   // "where am I relative to the circle's centre", which is pos - centre. Hence
   // MINUS to move right and PLUS to move left; one offset used both ways pushes
   // the pair apart symmetrically.
-  vec2 shapeOffset = vec2(0.55, 0.0);
+  vec2 shapeOffset = vec2(0.3, 0.0);
 
   float radius = 0.6;
   float circleDist = sdCircle(pos - shapeOffset, radius); // circle, to the right
 
-  // halfSize is measured from the centre out, so this box is 1.2 x 0.8 in pos units.
+  // halfSize is measured from the centre out, so this box is 1.2 x 0.8.
   vec2 halfSize = vec2(0.6, 0.4);
   float boxDist = sdBox(pos + shapeOffset, halfSize);     // box, to the left
 
-  // UNION. Not a convention to memorise: distToEdge answers "how far to the
-  // nearest surface", and with two shapes the nearest surface is whichever is
-  // closer — so the answer is the smaller of the two. Union is min() because
-  // NEAREST is min().
+  // COMBINE. Only this one line changes between the three booleans; both fields
+  // above stay exactly as they are.
   //
-  // Worth looking at the contour rings where the shapes meet. The value is
+  //   union         min(a, b)    inside EITHER — the nearer surface wins
+  //   intersection  max(a, b)    inside BOTH   — the binding constraint wins
+  //   subtraction   max(a, -b)   inside a, outside b — negating b turns its
+  //                              inside into outside, then intersect with that
+  //
+  // Neither is a convention to memorise. distToEdge answers "how far to the
+  // nearest surface". For a UNION the nearest surface is whichever is closer,
+  // so the answer is the smaller number — min(). For an INTERSECTION you have
+  // to be inside both, and inside means negative, so the one that decides the
+  // answer is the LARGER (least negative) of the two — max(). Same question,
+  // run the other way round: union asks "nearest", intersection asks "worst".
+
+  // float distToEdge = min(circleDist, boxDist);   // union
+
+  // INTERSECTION — the overlap only, so shapeOffset now does double duty: it
+  // places the shapes AND decides how much of them survives. At 0.3 you get a
+  // rounded slab: the box's straight right edge, the circle's arc bulging out to
+  // the left, and the box's flat top and bottom in between. Every stretch of
+  // that outline belongs to whichever shape was the binding constraint there —
+  // max() choosing, made visible.
+  //
+  // Push the offset far enough apart and the intersection becomes EMPTY: no
+  // pixel is inside both, distToEdge is positive everywhere, and you get a
+  // blank background. That's a correct answer, not a bug — worth doing once so
+  // a blank screen doesn't read as breakage later.
+  float distToEdge = max(circleDist, boxDist);
+
+  // NOT a boolean, but worth knowing, and worth keeping around:
+  //   float distToEdge = mix(circleDist, boxDist, 0.5);
+  // mix() AVERAGES the two fields instead of choosing between them, so it
+  // MORPHS one shape into the other rather than combining them — the result is
+  // part circle, part box, sitting between the two positions. Animate the t and
+  // the circle flows into the box:
+  //   float distToEdge = mix(circleDist, boxDist, 0.5 + 0.5 * sin(iTime));
+  // Averaging two distance fields keeps the result well behaved enough to draw
+  // (neither field changes faster than 1 unit per unit of space, so the average
+  // doesn't either), which is why it looks plausible rather than broken.
+
+  // Worth looking at the contour rings wherever two shapes meet. The value is
   // continuous across the join but its SLOPE is not: the rings arrive as a V
-  // rather than a smooth curve, because min() switches abruptly from one field
-  // to the other. That crease is what exercise 6's smooth minimum rounds off.
-  float distToEdge = min(circleDist, boxDist);
+  // rather than a smooth curve, because min()/max() switch abruptly from one
+  // field to the other. That crease is what exercise 6's smooth minimum rounds
+  // off — and it is also why max() is only a distance BOUND near the join,
+  // not a true distance.
 
   // Three ways to turn the sign into a mask, cheapest last. All of them read
   // 0 inside and 1 outside, matching the convention at the top of the file.
@@ -208,18 +246,19 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    the screen edge (pos only reaches 1.0 on the short axis), every pixel reads
 //    as inside, and you get a flat fill with no visible box at all.
 //
-// 5. COMBINE THEM.  [union done]
-//    Both shapes now live at once, each measured in its own frame, combined with
-//    min(). One shapeOffset used as pos - offset for the circle and pos + offset
-//    for the box pushes them apart symmetrically — nice, and cheaper than
-//    carrying two separate offsets.
+// 5. COMBINE THEM.  [union and intersection done]
+//    Both shapes live at once, each measured in its own frame. One shapeOffset
+//    used as pos - offset for the circle and pos + offset for the box pushes
+//    them apart symmetrically — nicer than carrying two separate centres.
 //
-//    Three operators, and only the last line changes between them:
-//      union         min(a, b)
-//      intersection  max(a, b)
-//      subtraction   max(a, -b)      <- b punches a hole in a
-//    Still to try: the other two. Negating the OTHER argument swaps which shape
-//    does the cutting.
+//    Detour worth recording: mix(a, b, 0.5) was tried here for intersection and
+//    is NOT one. It averages the fields rather than choosing between them, so
+//    it morphs the two shapes into a hybrid instead of intersecting them. A
+//    good accident — animate the t and you have shape tweening, which no
+//    boolean gives you.
+//
+//    Still to try: subtraction, max(a, -b). Negating the OTHER argument swaps
+//    which shape does the cutting.
 //
 //    Offsetting works by subtracting from pos first, because the shape function
 //    only knows the origin: sdCircle(pos - centre, radius) hands it "where am I
