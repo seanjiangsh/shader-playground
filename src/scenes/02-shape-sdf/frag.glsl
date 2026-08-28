@@ -10,9 +10,10 @@
 // off corners where two shapes meet, and repeat a shape across the screen — all
 // with arithmetic, and no extra geometry.
 //
-// Where this is now: `distToEdge` combines a circle and a box (currently their
-// intersection; union and a morph sit commented beside it), and `outsideMask`
-// is built from its SIGN — 0 where distToEdge is negative
+// Where this is now: `distToEdge` combines a circle and a box — currently box
+// minus circle, with union, intersection, the other subtraction order and a
+// morph all sitting commented beside it. `outsideMask` is built from its SIGN,
+// 0 where distToEdge is negative
 // (inside), 1 where it's positive (outside), with a one-pixel ramp across the
 // crossing. Nothing is flipped on purpose, so the picture reads straight off
 // the line above instead of asking you to invert it in your head. The palette
@@ -113,7 +114,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 halfSize = vec2(0.6, 0.4);
   float boxDist = sdBox(pos + shapeOffset, halfSize);     // box, to the left
 
-  // COMBINE. Only this one line changes between the three booleans; both fields
+  // * COMBINE. Only this one line changes between the three booleans; both fields
   // above stay exactly as they are.
   //
   //   union         min(a, b)    inside EITHER — the nearer surface wins
@@ -130,7 +131,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
   // float distToEdge = min(circleDist, boxDist);   // union
 
-  // INTERSECTION — the overlap only, so shapeOffset now does double duty: it
+  // * INTERSECTION — the overlap only, so shapeOffset now does double duty: it
   // places the shapes AND decides how much of them survives. At 0.3 you get a
   // rounded slab: the box's straight right edge, the circle's arc bulging out to
   // the left, and the box's flat top and bottom in between. Every stretch of
@@ -141,10 +142,37 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // pixel is inside both, distToEdge is positive everywhere, and you get a
   // blank background. That's a correct answer, not a bug — worth doing once so
   // a blank screen doesn't read as breakage later.
-  float distToEdge = max(circleDist, boxDist);
+  // float distToEdge = max(circleDist, boxDist);
 
-  // NOT a boolean, but worth knowing, and worth keeping around:
-  //   float distToEdge = mix(circleDist, boxDist, 0.5);
+  // * SUBTRACTION — a minus b, and it is intersection wearing a disguise.
+  //
+  // Negating a distance field turns the shape inside out. The boundary itself
+  // doesn't move (it's where the value is 0, and -0 is still 0); only the SIGN
+  // flips, so what was inside reads as outside. -boxDist therefore describes
+  // "everywhere except the box", with the box's own outline as its edge.
+  //
+  // Intersect a shape with that and you get "inside a, but outside b" — which
+  // is subtraction. Same max() as intersection, one sign flipped; there are
+  // really only two operators here, not three.
+  //
+  // The argument you DON'T negate is the one that survives. The negated one
+  // becomes the cutter, and the cut always carries the cutter's own edges,
+  // which is how you can read the result back:
+  //
+  //   max(circleDist, -boxDist)   circle survives, box cuts
+  //                               -> a disc with a square notch bitten out of
+  //                                  its left side; straight cut edges
+  //   max(-circleDist, boxDist)   box survives, circle cuts
+  //                               -> a slab with a round bite out of its right
+  //                                  side; curved cut edge
+  //
+  // Both were tried. The straight-vs-curved cut is the tell for which shape did
+  // the cutting.
+  // float distToEdge = max(circleDist, -boxDist);
+  float distToEdge = max(-circleDist, boxDist);
+
+  // * NOT a boolean, but worth knowing, and worth keeping around:
+  // float distToEdge = mix(circleDist, boxDist, 0.5);
   // mix() AVERAGES the two fields instead of choosing between them, so it
   // MORPHS one shape into the other rather than combining them — the result is
   // part circle, part box, sitting between the two positions. Animate the t and
@@ -246,7 +274,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    the screen edge (pos only reaches 1.0 on the short axis), every pixel reads
 //    as inside, and you get a flat fill with no visible box at all.
 //
-// 5. COMBINE THEM.  [union and intersection done]
+// 5. COMBINE THEM.  [done]
 //    Both shapes live at once, each measured in its own frame. One shapeOffset
 //    used as pos - offset for the circle and pos + offset for the box pushes
 //    them apart symmetrically — nicer than carrying two separate centres.
@@ -257,8 +285,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    good accident — animate the t and you have shape tweening, which no
 //    boolean gives you.
 //
-//    Still to try: subtraction, max(a, -b). Negating the OTHER argument swaps
-//    which shape does the cutting.
+//    Subtraction done too, both orders. Negating a field flips inside and
+//    outside without moving the boundary, so max(a, -b) reads as "inside a,
+//    outside b". The argument left un-negated survives; the negated one cuts,
+//    and the cut carries the cutter's edges — a square notch when the box cuts,
+//    a round bite when the circle does. Subtraction is intersection with one
+//    sign flipped, so the three operators are really two.
 //
 //    Offsetting works by subtracting from pos first, because the shape function
 //    only knows the origin: sdCircle(pos - centre, radius) hands it "where am I
