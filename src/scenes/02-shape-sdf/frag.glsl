@@ -10,10 +10,10 @@
 // off corners where two shapes meet, and repeat a shape across the screen — all
 // with arithmetic, and no extra geometry.
 //
-// Where this is now: `distToEdge` combines a circle and a box — currently box
-// minus circle, with union, intersection, the other subtraction order and a
-// morph all sitting commented beside it. `outsideMask` is built from its SIGN,
-// 0 where distToEdge is negative
+// Where this is now: `distToEdge` combines a circle and a box — currently a
+// SMOOTH union with an animated blend width. The hard union, intersection,
+// both subtraction orders and a morph all sit commented beside it.
+// `outsideMask` is built from its SIGN, 0 where distToEdge is negative
 // (inside), 1 where it's positive (outside), with a one-pixel ramp across the
 // crossing. Nothing is flipped on purpose, so the picture reads straight off
 // the line above instead of asking you to invert it in your head. The palette
@@ -82,6 +82,57 @@ float sdBox(in vec2 pos, in vec2 halfSize)
   // At most one of the two is non-zero for any pixel, so adding them is just a
   // branchless way of saying "whichever case applies".
   return outsideDist + insideDist;
+}
+
+// SMOOTH MINIMUM (the polynomial one). A union that fillets its own join
+// instead of creasing it. Two halves, and they do different jobs.
+//
+// k is a DISTANCE, in the same units as the fields, and it sets how wide the
+// blend band around the join is. Outside that band nothing happens at all.
+//
+// --- half one: h, a blend factor -------------------------------------------
+//   float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+//
+// (b - a) is how much the two fields disagree. Dividing by k measures that
+// disagreement in units of k, and 0.5 + 0.5*x maps the range -1..1 onto 0..1.
+// So h saturates the moment the fields differ by more than k:
+//
+//   b - a >= +k   ->  h = 1   ->  a is clearly the smaller, pick a
+//   a - b >= +k   ->  h = 0   ->  b is clearly the smaller, pick b
+//   a == b        ->  h = 0.5 ->  dead tie, right on the join
+//
+// --- half two: interpolate, then bulge --------------------------------------
+//   return mix(b, a, h) - k * h * (1.0 - h);
+//
+// mix(b, a, h) slides between the two fields instead of snapping. At h = 0 or
+// h = 1 it returns exactly b or a, which is exactly what min() would return —
+// that is why the function is a no-op away from the join.
+//
+// The second term is the fillet. h*(1-h) is a parabola: zero at h = 0 and
+// h = 1, peaking at 0.25 when h = 0.5. Multiplied by k and SUBTRACTED, it
+// pushes the field more negative near the tie and not at all elsewhere. More
+// negative means further inside, so the surface bulges outward exactly where
+// the two shapes meet. The bulge peaks at k/4 of extra depth at the tie.
+//
+// Together: the mix removes the sudden hand-over, and the parabola adds the
+// material that rounds the corner. Both terms vanish outside the band, so the
+// result is exactly min() there, and the seam between blended and unblended is
+// itself smooth.
+//
+// Symmetric in a and b, as a union should be: swapping them turns h into 1-h,
+// and both terms are unchanged by that.
+//
+// Related, free: smax(a, b, k) = -smin(-a, -b, k), so smooth intersection and
+// smooth subtraction come from the same function.
+//
+// Caveat: the result is no longer a true distance field near the join — it
+// under-reports — which is the usual price for smoothness.
+float smin(float a, float b, float blendWidth) {
+  float h = clamp(0.5 + 0.5 * (b - a) / blendWidth, 0.0, 1.0);
+  return mix(b, a, h) - blendWidth * h * (1.0 - h);
+}
+float smax(float a, float b, float blendWidth) {
+  return -smin(-a, -b, blendWidth);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
@@ -169,7 +220,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // Both were tried. The straight-vs-curved cut is the tell for which shape did
   // the cutting.
   // float distToEdge = max(circleDist, -boxDist);
-  float distToEdge = max(-circleDist, boxDist);
+  // float distToEdge = max(-circleDist, boxDist);
 
   // * NOT a boolean, but worth knowing, and worth keeping around:
   // float distToEdge = mix(circleDist, boxDist, 0.5);
@@ -177,7 +228,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // MORPHS one shape into the other rather than combining them — the result is
   // part circle, part box, sitting between the two positions. Animate the t and
   // the circle flows into the box:
-  //   float distToEdge = mix(circleDist, boxDist, 0.5 + 0.5 * sin(iTime));
+
+  // float distToEdge = mix(circleDist, boxDist, 0.5 + 0.5 * sin(iTime));
   // Averaging two distance fields keeps the result well behaved enough to draw
   // (neither field changes faster than 1 unit per unit of space, so the average
   // doesn't either), which is why it looks plausible rather than broken.
@@ -189,7 +241,28 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // off — and it is also why max() is only a distance BOUND near the join,
   // not a true distance.
 
-  // Three ways to turn the sign into a mask, cheapest last. All of them read
+  // * SOFTEN THE JOIN — a union whose seam is filleted rather than creased.
+  //
+  // Renamed from softenCentre: k isn't a centre, it's the WIDTH of the blend
+  // band, measured in pos units like every other distance here. At 0 you get
+  // plain min() and the hard corner back; by 0.35 the join has a visible
+  // fillet; past about 0.6 the two shapes read as one blob.
+  //
+  // Animating it is the point — the shapes melt together and separate again,
+  // and nothing about either shape changes, only how their fields are joined.
+  //
+  // Watch the contour rings while it moves: the V-shaped kink at the join
+  // rounds off as blendWidth grows. That kink is what this whole exercise was
+  // about.
+  //
+  // One edge to know about: this reaches exactly 0.0 once per cycle, and k = 0
+  // divides by zero inside smin. GLSL gives infinity rather than crashing, the
+  // clamp swallows it, and the result degrades to plain min() — so it looks
+  // fine. If it ever needs to be airtight, floor it: max(blendWidth, 1e-4).
+  float blendWidth = 0.5 + 0.5 * sin(iTime);
+  float distToEdge = smin(circleDist, boxDist, blendWidth);
+
+  // * Three ways to turn the sign into a mask, cheapest last. All of them read
   // 0 inside and 1 outside, matching the convention at the top of the file.
 
   // step will have jagged edge
@@ -302,14 +375,18 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    fine while you're thresholding it into a mask, but it matters the moment
 //    you use the field for a glow.
 //
-// 6. SOFTEN THE JOIN.
-//    Swap min() for a smooth minimum and the two shapes melt together instead
-//    of creasing:
-//      float smin(float a, float b, float k) {
-//        float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-//        return mix(b, a, h) - k * h * (1.0 - h);
-//      }
-//    Animate k with iTime and watch them merge and separate.
+// 6. SOFTEN THE JOIN.  [done]
+//    smin() replaces min(), and k is animated with iTime so the shapes melt
+//    together and apart. Full derivation lives above the function; the short
+//    version is that it is two terms — mix() to stop the sudden hand-over
+//    between fields, and a -k*h*(1-h) parabola that adds material only near
+//    the tie, rounding the corner. Both vanish more than k away from the join,
+//    so it is exactly min() elsewhere.
+//
+//    The reusable idea: k is a distance in the same units as the field, so a
+//    blend width is something you can reason about in the same space as radii
+//    and offsets. And smax(a,b,k) = -smin(-a,-b,k) gives smooth intersection
+//    and subtraction for free.
 //
 // 7. REPEAT IT, free of charge.
 //    The centred-repeat line from 01's notes works here unchanged (cellSize is
