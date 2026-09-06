@@ -19,6 +19,11 @@
 // the shader doesn't compile at all. That shows up as a blank canvas rather
 // than a wrong picture, which is easy to misread as "the operator broke".
 // `pnpm test:shaders` names the line.
+//
+// On top of the fill there is now an OUTLINE, built by folding the field about
+// its own zero. It is the first thing in this file that reads the distance
+// rather than just its sign, and it is where the difference between building a
+// field and COMPOSING it into a picture starts to matter.
 // `outsideMask` is built from its SIGN, 0 where distToEdge is negative
 // (inside), 1 where it's positive (outside), with a one-pixel ramp across the
 // crossing. Nothing is flipped on purpose, so the picture reads straight off
@@ -30,13 +35,18 @@
 // A worked solution is parked at src/_parked/02-shape-sdf-reference/ — it won't
 // appear in the sidebar. Try not to open it until yours runs.
 
-// The palette, at global scope. GLSL ES 1.00 permits that only because both
-// initialisers are constant expressions; a global initialised from a uniform or
-// a function call would not compile. Saying `const` states that intent and lets
-// the compiler treat them as literals:
+// The palette, at global scope. GLSL ES 1.00 permits that only because all
+// three initialisers are constant expressions; a global initialised from a
+// uniform or a function call would not compile. Saying `const` states that
+// intent and lets the compiler treat them as literals:
 //    const vec3 shapeColor = vec3(0.0);
+//
+// outlineColor earns its place here rather than being a local: once the outline
+// is PAINTED rather than erased, the ink is a third thing the picture is made
+// of, on the same footing as the fill and the background.
 vec3 shapeColor = vec3(0.0, 0.0, 0.0);
 vec3 bgColor = vec3(0.149,0.141,0.912);
+vec3 outlineColor = vec3(1.0, 1.0, 1.0);
 
 float sdCircle(in vec2 pos, in float radius)
 {
@@ -362,6 +372,36 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   float blendWidth = (0.5 + 0.5 * sin(iTime)) * shapeScale;
   float distToEdge = smin(circleDist, boxDist, blendWidth);
 
+  // * OUTLINE — exercise 8a, and the first thing here that reads the distance
+  // rather than only its sign.
+  //
+  // abs() on the FIELD is the sibling of abs() on the POSITION in sdBox. There
+  // it folded four corners into one; here it folds the field about its own
+  // zero, so every value becomes "how far from the edge", either side. The zero
+  // set does not move, which means abs(distToEdge) is still a distance field,
+  // and the shape it describes is the original outline: a curve with no
+  // interior.
+  //
+  // Subtracting a thickness then inflates that curve into a band. The new zero
+  // set is where abs(distToEdge) == thickness, one contour either side of the
+  // original edge, so the band is 2 * thickness wide — the name undersells it
+  // by half. The reason the picture still reads as a 10px line is the
+  // composition below, not this.
+  //
+  // The proof that this is a real SDF and not a special case: it goes through
+  // the SAME clamp ramp as the fill, unchanged. Any "field" that needs its own
+  // bespoke masking formula is not a distance field.
+  //
+  // thickness is a distance, so it needs a space. This is SCREEN space: ten
+  // screen pixels, so the line keeps its weight when cellsAcross changes and
+  // the shapes shrink underneath it. The alternative is design space —
+  // thickness multiplied by shapeScale — which keeps the line proportional to
+  // the artwork and lets it thin out as cells are added. Two different
+  // intentions; worth flipping between them once while changing cellsAcross.
+  float thickness = 5.0 * onePixel;
+  float outline = abs(distToEdge) - thickness;
+  float outlineMask = clamp(0.5 + outline / onePixel, 0.0, 1.0);
+
   // * Three ways to turn the sign into a mask, cheapest last. All of them read
   // 0 inside and 1 outside, matching the convention at the top of the file.
 
@@ -380,6 +420,38 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // end. The ramp pixels land in between, and that partial blend IS the
   // anti-aliasing — coverage turned into color by a linear interpolation.
   vec3 color = mix(shapeColor, bgColor, outsideMask);
+
+  // Now COMPOSE the band into the picture — a separate decision from building
+  // the field, and the place where the first attempt went subtly wrong.
+  //
+  // Read the argument order off the mask, exactly as with the fill.
+  // outlineMask is the band's OUTSIDE-ness: 0 on the ink, 1 away from it. And
+  // mix(a, b, t) returns a at t = 0. So the ink goes FIRST and the picture so
+  // far goes second, which paints the band on top of whatever was already
+  // there. Painting last is what puts it on top.
+  //
+  // Two properties this has that the first version did not: the ink is its own
+  // color rather than whatever the fill happened to be, and the fill SURVIVES
+  // underneath, so the shape is filled and outlined at once. The full band is
+  // visible now too, straddling the edge, so the line is 2 * thickness wide —
+  // twice what it looked like before. Halve thickness to get the old weight
+  // back.
+  //
+  // The first attempt, kept because the mistake is instructive:
+  //   color = mix(color, bgColor, outlineMask);
+  // Same mask, arguments the other way round, so it keeps the picture ON the
+  // band and paints bgColor over everything else. That ERASES the fill instead
+  // of painting ink, and the visible line is the leftover shapeColor from the
+  // band's inner half — the outer half was already bgColor, which is why it
+  // read as thickness wide rather than 2 * thickness. It looks correct, and its
+  // anti-aliasing genuinely is correct on both sides, but the line's color
+  // stops being a choice and the fill cannot survive, because destroying the
+  // fill is what draws the line.
+  //
+  // Worth keeping both around and switching between them: same field, same
+  // mask, two different pictures, and the difference is entirely in the compose
+  // step.
+  color = mix(outlineColor, color, outlineMask);
 
   // Exercise 3: the field made visible. cos() of the distance draws a contour
   // every time distToEdge advances by 2*PI/10, so this is a topographic map of
@@ -533,13 +605,30 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    Two things that read the actual number, both one line, both going between
 //    the color mix and the cos() contour line:
 //
-//    a) OUTLINE. abs(distToEdge) - thickness, fed through the same clamp ramp.
-//       Worth seeing why that works: abs() folds the field about its own zero,
-//       exactly the way abs() folded SPACE in sdBox. The single zero contour
-//       becomes two, one either side of the edge, and subtracting thickness
-//       pushes them apart. So an outline is just a shape whose SDF you built
-//       out of another shape's SDF. Try it on a shape you have already, then
-//       try mixing outline and fill in the same picture.
+//    a) OUTLINE.  [done]
+//       abs(distToEdge) - thickness, through the same clamp ramp as the fill.
+//       An outline is just a shape whose SDF is built out of another shape's
+//       SDF, and abs() on the field is the same fold as abs() on the position
+//       back in sdBox.
+//
+//       The part that was actually new: building the field and COMPOSING it
+//       into the picture are two separate decisions, and only the first one is
+//       maths. The field came out right first try; the compose line then said
+//       "erase everything off the band" rather than "paint ink on the band",
+//       which produces a correct-looking outline for the wrong reason and
+//       quietly costs you the choice of ink color and the option of keeping the
+//       fill. Fixed by swapping the mix() arguments and giving the ink its own
+//       palette entry; the erase version is kept commented beside it, because
+//       comparing the two is the lesson.
+//
+//       The reusable habit: read mix()'s argument order off what the mask
+//       MEANS. Both masks in this file are outside-ness, so in both cases the
+//       thing being drawn goes first. Getting a plausible picture is not
+//       evidence that the reasoning was right.
+//
+//       Also worth having hit: thickness is a distance, so it has a space, and
+//       screen space and design space behave differently the moment cellsAcross
+//       changes.
 //
 //    b) GLOW. Something that decays with distance and never quite reaches zero:
 //         exp(-glowFalloff * max(distToEdge, 0.0))
