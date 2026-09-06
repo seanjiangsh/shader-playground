@@ -528,5 +528,58 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //        own cell. Fine for a mask, visible in the contours at every seam, and
 //        it would break a glow or a raymarch.
 //
+// 8. USE THE FIELD, NOT JUST ITS SIGN.
+//    Everything so far has thrown the distance away the moment it had a sign.
+//    Two things that read the actual number, both one line, both going between
+//    the color mix and the cos() contour line:
+//
+//    a) OUTLINE. abs(distToEdge) - thickness, fed through the same clamp ramp.
+//       Worth seeing why that works: abs() folds the field about its own zero,
+//       exactly the way abs() folded SPACE in sdBox. The single zero contour
+//       becomes two, one either side of the edge, and subtracting thickness
+//       pushes them apart. So an outline is just a shape whose SDF you built
+//       out of another shape's SDF. Try it on a shape you have already, then
+//       try mixing outline and fill in the same picture.
+//
+//    b) GLOW. Something that decays with distance and never quite reaches zero:
+//         exp(-glowFalloff * max(distToEdge, 0.0))
+//       max() at 0 stops the inside going bright; exp() is the shape of the
+//       falloff, and glowFalloff is 1/distance, so it too belongs in the units
+//       table above. Add it to color rather than mixing, so it reads as light.
+//
+//    THEN the point of putting these after exercise 7: the glow will draw hard
+//    seams along every cell boundary. That is not a bug in the glow, it is the
+//    repetition caveat cashing out. A mask only looks at the sign right next to
+//    the shape; a glow looks at the value far from it, out where the field is
+//    lying about which copy is nearest. The contour rings were already telling
+//    you this quietly. Two honest responses: lower fill so the glow has decayed
+//    to nothing before it reaches the wall, or raise glowFalloff. Neither is a
+//    fix, they just keep the lie below the noise floor. Worth knowing which one
+//    you are doing.
+//
+// 9. GIVE EACH CELL AN IDENTITY.
+//    Right now every cell is identical, which is the giveaway that it is a
+//    tiling rather than a drawing. The fix is already sitting inside the repeat
+//    line: floor(pos / cellSize + 0.5) IS the integer coordinate of the cell,
+//    so pull it out into a `cellId` and you have a per-cell value for free.
+//
+//    Turn it into a number to vary things with:
+//      float rnd = fract(sin(dot(cellId, vec2(127.1, 311.7))) * 43758.5453);
+//    Not real randomness — a hash. Same cell, same value, every frame, which is
+//    what you want; a per-cell rand() that flickered would be useless.
+//
+//    Then spend it. Easiest first: offset the blend phase per cell so the
+//    shapes melt out of step with each other (rnd * 6.283 added inside sin).
+//    Then rotation, which needs a 2x2:
+//      float a = rnd * 6.283;
+//      mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
+//    and rotate scaledPos before handing it to the shape functions.
+//
+//    Two things to notice when you do. A rotation is orthonormal, so it does
+//    not change distances: unlike shapeScale, there is nothing to multiply back
+//    on the way out. And rotating cannot break the packing, because designReach
+//    is a bounding CIRCLE and a circle is the one bound rotation leaves alone.
+//    That was luck at the time; it is a reason now.
+//
 // STUCK? `pnpm test:shaders` will tell you about syntax and type errors without
 // you having to hunt for a blank screen in the browser.
