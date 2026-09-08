@@ -1,4 +1,4 @@
-// * LEVEL 2 — SIGNED DISTANCE FIELDS. Exercises 1 to 7 done, 8 in progress.
+// * LEVEL 2 — SIGNED DISTANCE FIELDS. Exercises 1 to 8 done.
 //
 // House style, repo-wide: every SECTION heading starts with `// *`, and the
 // lines under it are plain `//`. The Better Comments extension paints the
@@ -15,42 +15,37 @@
 // off corners where two shapes meet, and repeat a shape across the screen — all
 // with arithmetic, and no extra geometry.
 //
-// Where this is now: `distToEdge` combines a circle and a box — currently a
-// SMOOTH union with an animated blend width — and the whole pair is REPEATED
-// across the screen by folding the coordinate into a cell. The hard union,
-// intersection, both subtraction orders and a morph all sit commented beside
-// it, and exactly ONE of them may be live at a time: they all declare
-// `float distToEdge`, so uncommenting a second one is a redefinition error and
-// the shader doesn't compile at all. That shows up as a blank canvas rather
-// than a wrong picture, which is easy to misread as "the operator broke".
-// `pnpm test:shaders` names the line.
+// * HOW THIS FILE IS ORGANISED
 //
-// On top of the fill there is now an OUTLINE and a GLOW, both built from the
-// distance rather than just its sign, and that is where the difference between
-// building a field and COMPOSING it into a picture starts to matter.
+// Everything used to live in one long mainImage. It is now one function per
+// idea, so mainImage reads as the pipeline and each step's notes sit with the
+// step rather than scrolling past it:
 //
-// The picture is now assembled in LAYERS, and the order of those layers is a
-// decision, not a detail. As it stands:
+//    centredPos / pixelSize    where am I, and how big is a pixel
+//    repeatDomain              fold the plane into one repeating cell
+//    fitToCell                 shrink the artwork to fit that cell
+//    sceneField                circle + box -> ONE distance      <- the maths
+//    coverage / outlineField / glowFrom / contourRings           <- the masks
+//    paintLayers               stack colors using those masks    <- the picture
+//
+// The split between the last two is the one worth keeping. A mask says WHERE
+// something is; painting says WHAT color goes there and IN WHAT ORDER. Both
+// bugs in exercise 8 were painting bugs wearing a maths costume, so the file
+// now keeps them visibly apart.
+//
+// * THE PICTURE IS BUILT IN LAYERS, back to front:
 //
 //   1. background   bgColor, the ground everything sits on
 //   2. glow         light added around the shape              (add)
 //   3. fill         the shape painted over the glow           (mix, by sign)
 //   4. outline      ink painted over both                     (mix, by band)
+//   5. contours     the field itself, drawn on top            (add)
 //
 // Each step takes the picture so far and puts something on top of it. Read the
-// mix() arguments off what each mask MEANS and the order writes itself.
-//
-// The body of mainImage is split to match: first every mask is computed with
-// no colors in sight, then the layers are painted in order. Both bugs in this
-// section were painting bugs, not maths bugs, so the split is there to make
-// the painting easy to read.
-// `outsideMask` is built from its SIGN, 0 where distToEdge is negative
-// (inside), 1 where it's positive (outside), with a one-pixel ramp across the
-// crossing. Nothing is flipped on purpose, so the picture reads straight off
-// the line above instead of asking you to invert it in your head. The palette
-// keeps that reading by putting the dark color inside. The one consequence to
-// hold on to: `outsideMask` really means "outside-ness", which is why
-// shapeColor is the FIRST argument to mix().
+// mix() arguments off what each mask MEANS and the order writes itself: a mask
+// here is always OUTSIDE-ness, 0 on the thing and 1 away from it, and
+// mix(a, b, t) returns a at t = 0, so the thing being drawn is always the
+// FIRST argument and "the picture so far" is the second.
 //
 // A worked solution is parked at src/_parked/02-shape-sdf-reference/ — it won't
 // appear in the sidebar. Try not to open it until yours runs.
@@ -68,16 +63,41 @@ vec3 shapeColor = vec3(0.0, 0.0, 0.0);
 vec3 bgColor = vec3(0.05, 0.04, 0.35);
 vec3 outlineColor = vec3(1.0, 1.0, 1.0);
 
+// * TUNING — every dial in the scene, in one place.
+//
+// They are up here because the functions below need them and GLSL has no
+// closures; ALL_CAPS marks them as globals so a name inside a function is
+// obviously either a parameter or one of these.
+//
+// The comment against each one is its SPACE, and that is the single most
+// useful thing to know about any constant in this file. Mixing spaces is
+// where every layout bug so far came from:
+//
+//   screen pixels   measured in onePixel — independent of zoom
+//   pos units       -1..1 across the short axis of the window
+//   design units    whatever reads nicely for the artwork itself
+//
+const float CELLS_ACROSS   = 3.0;              // count: cells across the short axis
+const float CELL_FILL      = 0.8;              // fraction of a cell the artwork spends
+const vec2  SHAPE_OFFSET   = vec2(0.3, 0.0);   // design units
+const float CIRCLE_RADIUS  = 0.6;              // design units
+const vec2  BOX_HALF_SIZE  = vec2(0.6, 0.4);   // design units
+const float OUTLINE_PIXELS = 5.0;              // screen pixels (half the line width)
+const float GLOW_PIXELS    = 16.0;             // screen pixels
+const float GLOW_INTENSITY = 0.3;              // brightness, unitless
+const float CONTOUR_FREQ   = 10.0;             // 1 / pos units
+const float CONTOUR_AMOUNT = 0.06;             // brightness, unitless
+
+// * sdCircle — the easy one: distance from the origin, shifted so that 0
+// lands on the rim. sdBox below is the same idea, only harder to see.
 float sdCircle(in vec2 pos, in float radius)
 {
-  // * sdCircle — the easy one: distance from the origin, shifted so that 0
-  // lands on the rim. sdBox below is the same idea, only harder to see.
   return length(pos) - radius;
 }
 
-// * sdBox — halfSize is measured out from the CENTRE, so vec2(0.6, 0.4) is a box 1.2 wide
-// and 0.8 tall in pos units — not 0.6 x 0.4. That catches everyone once, and
-// it's why an over-large halfSize fills the whole screen.
+// * sdBox — halfSize is measured out from the CENTRE, so vec2(0.6, 0.4) is a
+// box 1.2 wide and 0.8 tall in pos units — not 0.6 x 0.4. That catches
+// everyone once, and it's why an over-large halfSize fills the whole screen.
 //
 // The four regions the function has to handle, after folding:
 //
@@ -159,7 +179,9 @@ float sdBox(in vec2 pos, in vec2 halfSize)
 // and both terms are unchanged by that.
 //
 // Related, free: smax(a, b, k) = -smin(-a, -b, k), so smooth intersection and
-// smooth subtraction come from the same function.
+// smooth subtraction come from the same function. Unused so far, kept because
+// it costs one line and is the thing to reach for when a smooth intersection
+// is wanted.
 //
 // Caveat: the result is no longer a true distance field near the join — it
 // under-reports — which is the usual price for smoothness.
@@ -171,115 +193,121 @@ float smax(float a, float b, float blendWidth) {
   return -smin(-a, -b, blendWidth);
 }
 
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-  // * NORMALISE by the SHORT axis, so it always spans -1..1 and radius reads
-  // directly as a fraction of it: radius = 1.0 touches the short edges, 0.6
-  // makes the circle 60% of the short side. Dividing by iResolution.y instead
-  // would fit to the height only; min() here is CSS object-fit: contain, and
-  // max() would be cover.
+// * NORMALISE by the SHORT axis, so pos always spans -1..1 across it and a
+// radius reads directly as a fraction: radius = 1.0 touches the short edges,
+// 0.6 makes the circle 60% of the short side. Dividing by iResolution.y
+// instead would fit to the height only; min() here is CSS object-fit: contain,
+// and max() would be cover.
+vec2 centredPos(in vec2 fragCoord) {
   float shortSide = min(iResolution.x, iResolution.y);
-  vec2  pos       = (2.0 * fragCoord - iResolution.xy) / shortSide;
-  // one screen pixel, in pos units; must use the same divisor as pos
-  float onePixel  = 2.0 / shortSide;
+  return (2.0 * fragCoord - iResolution.xy) / shortSide;
+}
 
-  // * REPEAT THE DOMAIN. The last of the coordinate tricks, and the same move as
-  // offsetting and folding: nothing is copied, the COORDINATE is wrapped.
-  //
-  //   floor(pos / cellSize + 0.5)   round-to-nearest — the index of the cell
-  //                                 centre nearest this pixel
-  //   * cellSize                    that centre's position
-  //   pos - (...)                   where I am RELATIVE to my own cell centre
-  //
-  // so cellPos only ever spans -cellSize/2 .. +cellSize/2. The + 0.5 is what
-  // centres a cell on the origin; a plain floor() would put a cell CORNER
-  // there instead. One fold, no loop: a thousand copies cost what one costs.
-  //
-  // COUNT cells rather than measure them. pos spans -1..1 on the short axis, so
-  // that axis is 2.0 units wide, which makes a hand-written cellSize confusing:
-  // 0.5 is not "half", it is a quarter of the short side. Deriving it from
-  // cellsAcross puts the number you actually care about on the left.
-  //
-  // Odd counts end flush. Cell boundaries land at (k + 0.5) * cellSize, so they
-  // coincide with the screen edge at 1.0 only when cellsAcross is odd; an even
-  // count slices the top and bottom rows in half. 3 is odd. The long axis is a
-  // different width, so it gets sliced either way.
-  //
-  // The price: this is no longer a true distance field. A pixel measures only
-  // against its OWN cell's copy, never the neighbour that might be nearer. That
-  // is invisible in the mask (which only cares about the sign near the shape,
-  // and the shape is nowhere near the seam) but it is visible in the contour
-  // rings, and it would break a glow. See the note by the cos() line below.
-  float cellsAcross = 3.0;
-  float cellSize = 2.0 / cellsAcross;   // pos spans -1..1, so 2.0 wide
-  vec2 cellPos = pos - cellSize * floor(pos / cellSize + 0.5);
+// * ONE SCREEN PIXEL, measured in pos units. It must use the same divisor as
+// centredPos or every "one pixel wide" thing in the file quietly lies. Kept as
+// its own function so that pairing is impossible to break by editing one and
+// not the other.
+float pixelSize() {
+  return 2.0 / min(iResolution.x, iResolution.y);
+}
 
-  // * FIT THE ARTWORK TO THE CELL, instead of hand-tuning it to match.
-  //
-  // Repetition wraps the coordinate; it does not SHRINK anything. So the first
-  // attempt kept radius 0.6 and offset 0.3, which reach 0.9 from the design
-  // origin, and posted them into a cell with only cellSize/2 to spend. Every
-  // pixel came out inside something and the screen went solid. Nothing was
-  // wrong with the repeat line; the constants were simply written in the wrong
-  // space.
-  //
-  // Which is the general lesson: every constant here lives in exactly ONE
-  // space, and mixing them is where the bugs are.
-  //
-  //   screen pixels   onePixel                 must never follow cellSize
-  //   pos units       cellSize, distToEdge     -1..1 on the short axis
-  //   design units    the three below          whatever reads nicely
-  //
-  // The design, in its own units. These are the same numbers from exercises 4
-  // and 5, untouched — that is the point. They still say "a circle 0.6 from its
-  // centre"; they just no longer need to know how big a cell is.
-  vec2 shapeOffset = vec2(0.3, 0.0);
-  float circleRadius = 0.6;
-  vec2 boxHalfSize = vec2(0.6, 0.4);
+// * REPEAT THE DOMAIN. The last of the coordinate tricks, and the same move as
+// offsetting and folding: nothing is copied, the COORDINATE is wrapped.
+//
+//   floor(pos / cellSize + 0.5)   round-to-nearest — the index of the cell
+//                                 centre nearest this pixel
+//   * cellSize                    that centre's position
+//   pos - (...)                   where I am RELATIVE to my own cell centre
+//
+// so the result only ever spans -cellSize/2 .. +cellSize/2. The + 0.5 is what
+// centres a cell on the origin; a plain floor() would put a cell CORNER there
+// instead. One fold, no loop: a thousand copies cost what one costs.
+//
+// COUNT cells rather than measure them. pos spans -1..1 on the short axis, so
+// that axis is 2.0 units wide, which makes a hand-written cellSize confusing:
+// 0.5 is not "half", it is a quarter of the short side. Deriving cellSize from
+// CELLS_ACROSS puts the number you actually care about on the left.
+//
+// Odd counts end flush. Cell boundaries land at (k + 0.5) * cellSize, so they
+// coincide with the screen edge at 1.0 only when CELLS_ACROSS is odd; an even
+// count slices the top and bottom rows in half. 3 is odd. The long axis is a
+// different width, so it gets sliced either way.
+//
+// The price: this is no longer a true distance field. A pixel measures only
+// against its OWN cell's copy, never the neighbour that might be nearer. That
+// is invisible in the fill mask (which only cares about the sign right beside
+// the shape, nowhere near a seam) but it is plainly visible in the contour
+// rings and in the glow, which read the field far from the shape.
+vec2 repeatDomain(in vec2 pos, in float cellSize) {
+  return pos - cellSize * floor(pos / cellSize + 0.5);
+}
 
-  // How far the design reaches from its own origin: the radius of a bounding
-  // circle around everything in it. For the disc that is centre distance plus
-  // radius. For the box it is the far CORNER, which is why it is
-  // length(shapeOffset + boxHalfSize) and not shapeOffset.x + boxHalfSize.x —
-  // those happen to agree only because this offset is axis-aligned.
-  //
-  // A bounding circle is conservative for a square cell, since the cell's
-  // corners sit further out than its walls, so this packs slightly looser than
-  // it has to. It is one line, and it stays correct if the design ever rotates.
-  float designReach = max(length(shapeOffset) + circleRadius,
-                          length(shapeOffset + boxHalfSize));
+// * FIT THE ARTWORK TO THE CELL, instead of hand-tuning it to match. Returns
+// the scale factor sceneField draws at.
+//
+// Repetition wraps the coordinate; it does not SHRINK anything. So the first
+// attempt kept radius 0.6 and offset 0.3, which reach 0.9 from the design
+// origin, and posted them into a cell with only cellSize/2 to spend. Every
+// pixel came out inside something and the screen went solid. Nothing was wrong
+// with the repeat line; the constants were simply written in the wrong space.
+//
+// designReach is how far the design reaches from its own origin: the radius of
+// a bounding circle around everything in it. For the disc that is centre
+// distance plus radius. For the box it is the far CORNER, which is why it is
+// length(SHAPE_OFFSET + BOX_HALF_SIZE) and not SHAPE_OFFSET.x +
+// BOX_HALF_SIZE.x — those happen to agree only because this offset is
+// axis-aligned.
+//
+// A bounding circle is conservative for a square cell, since the cell's corners
+// sit further out than its walls, so this packs slightly looser than it has to.
+// It is one line, and it stays correct if the design ever rotates.
+//
+// Then it is simply budget over demand: half a cell is what there is,
+// designReach is what was asked for, and CELL_FILL says how much of the budget
+// to actually spend. CELL_FILL = 1.0 means neighbouring bounding circles touch.
+//
+// The test that this is wired up properly: change CELLS_ACROSS on its own and
+// the picture should re-tile with every shape keeping its proportions and its
+// share of the cell. Measured across three cell sizes, the fraction of each
+// cell covered by the artwork stayed identical to three decimal places.
+float fitToCell(in float cellSize) {
+  float designReach = max(length(SHAPE_OFFSET) + CIRCLE_RADIUS,
+                          length(SHAPE_OFFSET + BOX_HALF_SIZE));
+  return CELL_FILL * 0.5 * cellSize / designReach;
+}
 
-  // The only layout knob. 1.0 means the bounding circles of neighbouring copies
-  // exactly touch; 0.8 spends 80% of the budget and leaves a gutter.
-  float fill = 0.8;
-
-  // Budget over demand: half a cell is what there is, designReach is what was
-  // asked for.
-  float shapeScale = fill * 0.5 * cellSize / designReach;
-
-  // * SCALING AN SDF: divide the position going in, multiply the distance coming
-  // out.
-  //
-  //    d = sdShape(pos / s, params) * s
-  //
-  // The divide zooms the shape. The multiply puts the answer back into pos
-  // units, which is what keeps onePixel and the AA ramp meaningful. Forget the
-  // multiply and the shape is still the right shape, but the field's SLOPE is
-  // wrong by 1/s — so the "one pixel" ramp comes out 1/s pixels wide and the
-  // edges go mysteriously soft or hard.
+// * THE SCENE FIELD — two shapes in, ONE distance out. Everything downstream
+// reads only the number this returns, which is why adding a shape or changing
+// how they combine stays local to this function.
+//
+// * SCALING AN SDF: divide the position going in, multiply the distance coming
+// out.
+//
+//    d = sdShape(pos / s, params) * s
+//
+// The divide zooms the shape. The multiply puts the answer back into pos units,
+// which is what keeps onePixel and the AA ramp meaningful. Forget the multiply
+// and the shape is still the right shape, but the field's SLOPE is wrong by
+// 1/s — so the "one pixel" ramp comes out 1/s pixels wide and the edges go
+// mysteriously soft or hard.
+//
+// Offsetting a shape moves the COORDINATE SYSTEM, not the shape. sdCircle only
+// knows how to draw a circle at the origin, so what it wants handed to it is
+// "where am I relative to the circle's centre", which is pos - centre. Hence
+// MINUS to move right and PLUS to move left; one offset used both ways pushes
+// the pair apart symmetrically.
+float sceneField(in vec2 cellPos, in float shapeScale) {
   vec2 scaledPos = cellPos / shapeScale;
 
-  float circleDist = sdCircle(scaledPos - shapeOffset, circleRadius) * shapeScale;
-  float boxDist    = sdBox(scaledPos + shapeOffset, boxHalfSize)   * shapeScale;
-
-  // The test that this is wired up properly: change cellsAcross on its own and
-  // the picture should re-tile with every shape keeping its proportions and its
-  // share of the cell. Measured across three cell sizes, the fraction of each
-  // cell covered by the artwork stayed identical to three decimal places.
-
+  float circleDist = sdCircle(scaledPos - SHAPE_OFFSET, CIRCLE_RADIUS) * shapeScale;
+  float boxDist    = sdBox(scaledPos + SHAPE_OFFSET, BOX_HALF_SIZE)   * shapeScale;
 
   // * COMBINE. Only one line changes between the three booleans; both fields
   // above stay exactly as they are. Only ONE `float distToEdge = ...` may be
-  // uncommented at a time — two is a redefinition error, not a picture.
+  // uncommented at a time — two is a redefinition error, not a picture. That
+  // error is deliberate protection: keeping these as assignments rather than
+  // early returns means the compiler catches a double-uncomment instead of
+  // silently ignoring the second one as unreachable code.
   //
   //   union         min(a, b)    inside EITHER — the nearer surface wins
   //   intersection  max(a, b)    inside BOTH   — the binding constraint wins
@@ -295,7 +323,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
   // float distToEdge = min(circleDist, boxDist);   // union
 
-  // * INTERSECTION — the overlap only, so shapeOffset now does double duty: it
+  // * INTERSECTION — the overlap only, so SHAPE_OFFSET now does double duty: it
   // places the shapes AND decides how much of them survives. At 0.3 you get a
   // rounded slab: the box's straight right edge, the circle's arc bulging out to
   // the left, and the box's flat top and bottom in between. Every stretch of
@@ -306,7 +334,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // pixel is inside both, distToEdge is positive everywhere, and you get a
   // blank background. That's a correct answer, not a bug — worth doing once so
   // a blank screen doesn't read as breakage later.
-  
+
   // float distToEdge = max(circleDist, boxDist);
 
   // * SUBTRACTION — a minus b, and it is intersection wearing a disguise.
@@ -337,236 +365,229 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // float distToEdge = max(circleDist, -boxDist);
   // float distToEdge = max(-circleDist, boxDist);
 
-  // * NOT a boolean, but worth knowing, and worth keeping around:
+  // * MORPH — not a boolean, but worth knowing, and worth keeping around.
   // mix() AVERAGES the two fields instead of choosing between them, so it
   // MORPHS one shape into the other rather than combining them — the result is
   // part circle, part box, sitting between the two positions. Animate the t and
-  // the circle flows into the box:
-
-  // float distToEdge = mix(circleDist, boxDist, 0.5);
-
+  // the circle flows into the box.
+  //
   // Averaging two distance fields keeps the result well behaved enough to draw
   // (neither field changes faster than 1 unit per unit of space, so the average
   // doesn't either), which is why it looks plausible rather than broken.
-  
+
+  // float distToEdge = mix(circleDist, boxDist, 0.5);
   // float distToEdge = mix(circleDist, boxDist, 0.5 + 0.5 * sin(iTime));
 
-  // Worth looking at the contour rings wherever two shapes meet. The value is
-  // continuous across the join but its SLOPE is not: the rings arrive as a V
-  // rather than a smooth curve, because min()/max() switch abruptly from one
-  // field to the other. That crease is what exercise 6's smooth minimum rounds
-  // off — and it is also why max() is only a distance BOUND near the join,
-  // not a true distance.
+  // Worth looking at the contour rings wherever two shapes meet under any of
+  // the hard operators above. The value is continuous across the join but its
+  // SLOPE is not: the rings arrive as a V rather than a smooth curve, because
+  // min()/max() switch abruptly from one field to the other. That crease is
+  // what the smooth minimum below rounds off — and it is also why max() is only
+  // a distance BOUND near the join, not a true distance.
 
-  // * SOFTEN THE JOIN — a union whose seam is filleted rather than creased.
+  // * SOFTEN THE JOIN — a union whose seam is filleted rather than creased,
+  // and the one that is live.
   //
-  // Renamed from softenCentre: k isn't a centre, it's the WIDTH of the blend
-  // band. It is a distance, so it has to live in the SAME space as the fields
-  // it is comparing — which since exercise 7 means pos units, not design
-  // units. That is the whole job of the `* shapeScale` below.
+  // blendWidth is not a centre, it is the WIDTH of the blend band. It is a
+  // distance, so it has to live in the SAME space as the fields it is
+  // comparing — pos units, not design units. That is the whole job of the
+  // `* shapeScale`.
   //
   // The animated 0..1 factor is therefore read in DESIGN units: at 0 you get
   // plain min() and the hard corner back; by 0.35 the join has a visible
   // fillet; past about 0.6 the two shapes read as one blob. Drop the
-  // `* shapeScale` and k becomes several times the size of the whole shape, so
-  // smin never leaves the blob regime.
+  // `* shapeScale` and blendWidth becomes several times the size of the whole
+  // shape, so smin never leaves the blob regime.
   //
-  // Blending also GROWS the shape: smin pushes the surface out by up to k/4
-  // beyond where min() would put it, which eats into the cell gutter. That
-  // bound is pessimistic — it only binds if the join sits on the outer
-  // boundary, and here it sits in the middle of the blob. Measured, the
-  // farthest reach grows about 3% at the peak of the cycle, which fill = 0.8
-  // absorbs without the copies ever touching.
+  // Blending also GROWS the shape: smin pushes the surface out by up to
+  // blendWidth/4 beyond where min() would put it, which eats into the cell
+  // gutter. That bound is pessimistic — it only binds if the join sits on the
+  // outer boundary, and here it sits in the middle of the blob. Measured, the
+  // farthest reach grows about 3% at the peak of the cycle, which CELL_FILL =
+  // 0.8 absorbs without the copies ever touching.
   //
   // Animating it is the point — the shapes melt together and separate again,
   // and nothing about either shape changes, only how their fields are joined.
   //
-  // Watch the contour rings while it moves: the V-shaped kink at the join
-  // rounds off as blendWidth grows. That kink is what this whole exercise was
-  // about.
-  //
-  // One edge to know about: this reaches exactly 0.0 once per cycle, and k = 0
-  // divides by zero inside smin. GLSL gives infinity rather than crashing, the
-  // clamp swallows it, and the result degrades to plain min() — so it looks
-  // fine. If it ever needs to be airtight, floor it: max(blendWidth, 1e-4).
+  // One edge to know about: this reaches exactly 0.0 once per cycle, and a
+  // blendWidth of 0 divides by zero inside smin. GLSL gives infinity rather
+  // than crashing, the clamp swallows it, and the result degrades to plain
+  // min() — so it looks fine. If it ever needs to be airtight, floor it:
+  // max(blendWidth, 1e-4).
   float blendWidth = (0.5 + 0.5 * sin(iTime)) * shapeScale;
   float distToEdge = smin(circleDist, boxDist, blendWidth);
 
-  // * TWO PHASES FROM HERE: masks, then paint.
-  // =======================================================================
-  // Nothing below MEASURES anything new. Every line from here is built out
-  // of distToEdge, in two clearly separate phases:
-  //
-  //   PHASE 1  masks   — turn the distance into "how much", per pixel.
-  //                      No colors. A mask says WHERE something is.
-  //   PHASE 2  paint   — stack colors using those masks. This says WHAT
-  //                      color goes there, and crucially IN WHAT ORDER.
-  //
-  // Keeping them apart is worth the extra blank line. Every bug in this
-  // section so far has been a phase-2 bug wearing a phase-1 costume: the
-  // field was right and the painting was wrong, twice.
-  // =======================================================================
+  return distToEdge;
+}
 
-  // * PHASE 1 — masks
-  // -----------------------------------------------------------------------
+// * COVERAGE — turn any distance field into a mask, with one pixel of
+// anti-aliasing. 0 inside the thing, 1 outside it, a straight ramp across the
+// crossing. Used for BOTH the fill and the outline, which is the point: if a
+// new field ever needs its own bespoke masking formula, it is not really a
+// distance field.
+//
+// Three ways to do this, cheapest last:
+//   step(0.0, dist)                        jagged, no anti-aliasing at all
+//   smoothstep(-onePixel, onePixel, dist)  centred, but two pixels wide
+//   clamp(0.5 + dist / onePixel, 0., 1.)   one pixel, centred, and exact
+//
+// The 0.5 is what centres it, and exercise 2 at the bottom of the file has the
+// derivation: it IS the coverage of a straight edge, not an approximation that
+// happens to look right.
+float coverage(in float dist, in float onePixel) {
+  return clamp(0.5 + dist / onePixel, 0.0, 1.0);
+}
 
-  // * FILL MASK. Three ways to turn the sign into a mask, cheapest last. All of
-  // them read 0 inside and 1 outside, matching the convention at the top of
-  // the file.
+// * OUTLINE FIELD — exercise 8a. Note what this returns: a FIELD, not a mask.
+// It is handed to coverage() like any other distance, and that is the whole
+// lesson made structural.
+//
+// abs() on the FIELD is the sibling of abs() on the POSITION in sdBox. There it
+// folded four corners into one; here it folds the field about its own zero, so
+// every value becomes "how far from the edge", either side. The zero set does
+// not move, which means abs(dist) is still a distance field, and the shape it
+// describes is the original outline: a curve with no interior.
+//
+// Subtracting a thickness then inflates that curve into a band. The new zero
+// set is where abs(dist) == thickness, one contour either side of the original
+// edge, so the band is 2 * OUTLINE_PIXELS wide — the name undersells it by
+// half. 5 pixels here draws a 10 pixel line.
+//
+// The thickness is in SCREEN space, so the line keeps its weight when
+// CELLS_ACROSS changes and the shapes shrink underneath it — the same choice
+// GLOW_PIXELS makes, for the same reason. The alternative is design space,
+// multiplying by shapeScale, which keeps the line proportional to the artwork
+// and lets it thin out as cells are added. Two different intentions; worth
+// flipping between them once while changing CELLS_ACROSS.
+float outlineField(in float dist, in float onePixel) {
+  return abs(dist) - OUTLINE_PIXELS * onePixel;
+}
 
-  // step will have jagged edge
-  // float outsideMask = step(0.0, distToEdge);
+// * GLOW — exercise 8b. Light that is brightest at the edge and fades with
+// distance, which is just "turn a distance into a brightness".
+//
+// exp(-x) is the fade. It needs no more theory than four values:
+//
+//     x = 0  ->  1.00        x = 2  ->  0.14
+//     x = 1  ->  0.37        x = 3  ->  0.05
+//
+// Starts at full, shrinks fast, never quite reaches zero — which is exactly
+// why a glow looks soft instead of ending at a rim.
+//
+// The falloff sets how fast. It is ONE OVER A DISTANCE, so it is the units
+// table read backwards: exp(-x) is about a third when x is 1, so
+//
+//     falloff = 1 / (the distance where you want a third left)
+//
+// Writing it as 1.0 / (GLOW_PIXELS * onePixel) puts that distance in SCREEN
+// PIXELS, so the glow keeps its size in pixels whatever the window size and
+// whatever CELLS_ACROSS is doing. GLOW_PIXELS is the dial; nothing else here
+// needs touching.
+//
+// Getting this wrong the first time was instructive. `0.01 / onePixel` is the
+// same formula — rewrite 0.01 as 1/100 and it reads "fade over 100 pixels" —
+// but the gap between a shape's edge and its cell wall is only about 26 pixels
+// here. A fade that needs 100 pixels in a space 26 pixels wide never gets
+// going, so it came out as a flat wash rather than a glow. The formula was
+// right; there was no room for the number. When a falloff seems to do nothing,
+// measure the space it has before you change the maths.
+//
+// max(dist, 0.0) is not optional. Inside the shape the distance is NEGATIVE,
+// the two minus signs cancel, and exp() of a big positive number explodes.
+// Clamping says "treat everything inside as if it were on the edge".
+//
+// The consequence of that clamp is the thing to remember: this returns exactly
+// 1.0 across the WHOLE INTERIOR, not just near the edge. It is only safe
+// because paintLayers puts it down BEFORE the fill and lets the fill cover it.
+// Painted after the fill instead, it adds GLOW_INTENSITY on top of shapeColor
+// and the black interior reads as mid grey — measured 0.300 against 0.000.
+// Same number, same field, different order.
+float glowFrom(in float dist, in float onePixel) {
+  float falloff = 1.0 / (GLOW_PIXELS * onePixel);
+  return exp(-falloff * max(dist, 0.0));
+}
 
-  // smoothstep in the +-pixel range to have antialiasing
-  // float outsideMask = smoothstep(-onePixel, onePixel, distToEdge);
+// * CONTOUR RINGS (exercise 3) — the field made visible. cos() of the distance
+// draws a contour every time the distance advances by 2*PI/CONTOUR_FREQ, so
+// this is a topographic map of the very number every mask was built from.
+//
+// Since exercise 7 it also draws the SEAMS. The faint grid in the background is
+// the contours failing to line up across a cell boundary, because the distance
+// jumps there — each pixel only ever measured its own cell's copy. That is the
+// "no longer a true distance" note made visible.
+//
+// CONTOUR_FREQ is in 1 / pos units, so the rings keep their spacing while the
+// shapes shrink: more cells across means fewer rings on each shape. Divide it
+// by shapeScale if you'd rather the rings belonged to the artwork than to the
+// screen.
+//
+// Comment the call out in paintLayers whenever the rings fight the glow —
+// they draw the same information, and the glow says it more loudly. They stay
+// the cheapest debugging tool in the file for the moments you want to SEE the
+// field rather than use it.
+float contourRings(in float dist) {
+  return CONTOUR_AMOUNT * cos(dist * CONTOUR_FREQ);
+}
 
-  // cheapest, and exactly right: a one-pixel ramp centred on the edge.
-  // The 0.5 is what centres it — exercise 2 below has the derivation.
-  float outsideMask = clamp(0.5 + distToEdge / onePixel, 0.0, 1.0);
-
-  // * GLOW — exercise 8b. Light that is brightest at the edge and fades with
-  // distance, which is just "turn a distance into a brightness".
-  //
-  // exp(-x) is the fade. It needs no more theory than four values:
-  //
-  //     x = 0  ->  1.00        x = 2  ->  0.14
-  //     x = 1  ->  0.37        x = 3  ->  0.05
-  //
-  // Starts at full, shrinks fast, never quite reaches zero — which is exactly
-  // why a glow looks soft instead of ending at a rim.
-  //
-  // glowFalloff sets how fast. It is ONE OVER A DISTANCE, so it is the units
-  // table read backwards: exp(-x) is about a third when x is 1, so
-  //
-  //     glowFalloff = 1 / (the distance where you want a third left)
-  //
-  // Writing it as 1.0 / (glowPixels * onePixel) puts that distance in SCREEN
-  // PIXELS, so the glow keeps its size in pixels whatever the window size and
-  // whatever cellsAcross is doing. glowPixels is the dial; nothing else here
-  // needs touching.
-  //
-  // Getting this wrong the first time was instructive. `0.01 / onePixel` is the
-  // same formula — rewrite 0.01 as 1/100 and it reads "fade over 100 pixels" —
-  // but the gap between a shape's edge and its cell wall is only about 26
-  // pixels here. A fade that needs 100 pixels in a space 26 pixels wide never
-  // gets going, so it came out as a flat wash rather than a glow. The formula
-  // was right; there was no room for the number. When a falloff seems to do
-  // nothing, measure the space it has before you change the maths.
-  //
-  // max(distToEdge, 0.0) is not optional. Inside the shape distToEdge is
-  // NEGATIVE, the two minus signs cancel, and exp() of a big positive number
-  // explodes. Clamping says "treat everything inside as if it were on the
-  // edge".
-  //
-  // The consequence of that clamp is the thing to remember: glow is exactly
-  // 1.0 across the WHOLE INTERIOR, not just near the edge. This value is only
-  // safe because phase 2 paints it before the fill and lets the fill cover it.
-  // Painted after the fill instead, it adds glowIntensity on top of shapeColor
-  // and the black interior reads as mid grey — measured 0.300 against 0.000.
-  // Same number, same field, different order.
-  float glowPixels = 16.0;      // fade to about a third after this many pixels
-  float glowIntensity = 0.3;    // how much light to add at full brightness
-  float glowFalloff = 1.0 / (glowPixels * onePixel);
-  float glow = exp(-glowFalloff * max(distToEdge, 0.0));
-
-  // * OUTLINE — exercise 8a, and the first thing here that read the distance
-  // rather than only its sign.
-  //
-  // abs() on the FIELD is the sibling of abs() on the POSITION in sdBox. There
-  // it folded four corners into one; here it folds the field about its own
-  // zero, so every value becomes "how far from the edge", either side. The zero
-  // set does not move, which means abs(distToEdge) is still a distance field,
-  // and the shape it describes is the original outline: a curve with no
-  // interior.
-  //
-  // Subtracting a thickness then inflates that curve into a band. The new zero
-  // set is where abs(distToEdge) == thickness, one contour either side of the
-  // original edge, so the band is 2 * thickness wide — the name undersells it
-  // by half. thickness is 5 pixels here, which draws a 10 pixel line.
-  //
-  // The proof that this is a real SDF and not a special case: it goes through
-  // the SAME clamp ramp as the fill, unchanged. Any "field" that needs its own
-  // bespoke masking formula is not a distance field.
-  //
-  // thickness is a distance, so it needs a space. This is SCREEN space, so the
-  // line keeps its weight when cellsAcross changes and the shapes shrink
-  // underneath it — the same choice glowPixels makes above, and for the same
-  // reason. The alternative is design space, thickness multiplied by
-  // shapeScale, which keeps the line proportional to the artwork and lets it
-  // thin out as cells are added. Two different intentions; worth flipping
-  // between them once while changing cellsAcross.
-  float thickness = 5.0 * onePixel;
-  float outline = abs(distToEdge) - thickness;
-  float outlineMask = clamp(0.5 + outline / onePixel, 0.0, 1.0);
-
-  // * PHASE 2 — paint, back to front
-  // -----------------------------------------------------------------------
-  //
-  // Each line takes the picture so far and puts one more thing on top of it.
-  // Reading the order out loud is the whole trick: background, then light
-  // around the shape, then the shape, then the ink. Swap any two lines and
-  // you get a different picture from identical maths.
-  //
-  // Two rules cover every line here:
-  //   mix(a, b, t) returns a at t = 0, so whatever a mask is 0 ON goes FIRST.
-  //   Both masks in this file are OUTSIDE-ness, so the thing being drawn is
-  //   always the first argument, and "the picture so far" is the second.
-  // -----------------------------------------------------------------------
+// * PAINT — masks first, then layers, back to front. Nothing here MEASURES
+// anything; every line is built out of the one distance handed in.
+vec3 paintLayers(in float distToEdge, in float onePixel) {
+  float fillMask = coverage(distToEdge, onePixel);
+  float inkMask  = coverage(outlineField(distToEdge, onePixel), onePixel);
+  float glow     = glowFrom(distToEdge, onePixel);
 
   // Start from the background and build upwards.
   vec3 color = bgColor;
 
-  // Light, ADDED rather than mixed, because light adds. This lands before the
-  // fill on purpose: glow is 1.0 everywhere inside the shape, and letting the
-  // fill paint over it is cheaper and clearer than masking the glow.
-  color += glow * outlineColor * glowIntensity;
+  // Light, ADDED rather than mixed, because light adds. Before the fill on
+  // purpose: glow is 1.0 everywhere inside the shape, and letting the fill
+  // paint over it is cheaper and clearer than masking the glow.
+  color += glow * outlineColor * GLOW_INTENSITY;
 
-  // The shape itself. outsideMask is outside-ness, so shapeColor takes the 0
-  // end and "everything painted so far" takes the 1 end — note that second
+  // The shape itself. fillMask is outside-ness, so shapeColor takes the 0 end
+  // and "everything painted so far" takes the 1 end — note that second
   // argument is `color`, not bgColor, which is what makes this a layer rather
-  // than a fresh start. The ramp pixels land in between, and that partial
-  // blend IS the anti-aliasing: coverage turned into color by a linear
-  // interpolation.
-  color = mix(shapeColor, color, outsideMask);
+  // than a fresh start. The ramp pixels land in between, and that partial blend
+  // IS the anti-aliasing: coverage turned into color by a linear interpolation.
+  color = mix(shapeColor, color, fillMask);
 
   // The ink, last, so it covers both the fill and the glow. That is what makes
   // a crisp line read against a soft halo; move it above the glow line and the
   // halo would wash over the ink instead.
   //
   // The first attempt at this line, kept because the mistake is instructive:
-  //   color = mix(color, bgColor, outlineMask);
+  //   color = mix(color, bgColor, inkMask);
   // Same mask, arguments the other way round, so it keeps the picture ON the
   // band and paints bgColor over everything else. That ERASES the fill instead
   // of painting ink, and the visible line is the leftover shapeColor from the
   // band's inner half — the outer half was already bgColor, which is why it
-  // read as thickness wide rather than 2 * thickness. It looks correct, and its
-  // anti-aliasing genuinely is correct on both sides, but the line's color
+  // read as OUTLINE_PIXELS wide rather than twice that. It looks correct, and
+  // its anti-aliasing genuinely is correct on both sides, but the line's color
   // stops being a choice and the fill cannot survive, because destroying the
-  // fill is what draws the line. Worth switching between them once: same
-  // field, same mask, two different pictures.
-  color = mix(outlineColor, color, outlineMask);
+  // fill is what draws the line. Worth switching between them once: same field,
+  // same mask, two different pictures.
+  color = mix(outlineColor, color, inkMask);
 
-  // * CONTOUR RINGS (exercise 3) — the field made visible. cos() of the distance draws a contour
-  // every time distToEdge advances by 2*PI/10, so this is a topographic map of
-  // the very number every mask above was built from.
-  //
-  // Since exercise 7 it also draws the SEAMS. That faint grid in the background
-  // is the contours failing to line up across a cell boundary, because the
-  // distance jumps there — each pixel only ever measured its own cell's copy.
-  //
-  // The 10.0 is in pos units, so the rings keep their spacing while the shapes
-  // shrink: more cells across means fewer rings on each shape. Divide it by
-  // shapeScale if you'd rather the rings belonged to the artwork than to the
-  // screen.
-  //
-  // Switched OFF now that the glow is here. The two draw the same information
-  // and fight each other visually, and the glow says it better: rings show the
-  // seam as a kink, the glow shows it as a hard line. Turn the rings back on
-  // whenever you want to SEE the field rather than use it — they remain the
-  // cheapest debugging tool in the file.
-  color += 0.06 * cos(distToEdge * 10.0);
+  // The field drawn on top of the picture. Comment out when it fights the glow.
+  color += contourRings(distToEdge);
 
-  fragColor = vec4(color, 1.0);
+  return color;
+}
+
+// * THE PIPELINE. Six lines, each one a question: where am I, how big is a
+// pixel, which cell am I in, how much room does the artwork get, how far am I
+// from the nearest edge, and what color is that.
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  vec2  pos      = centredPos(fragCoord);
+  float onePixel = pixelSize();
+
+  float cellSize   = 2.0 / CELLS_ACROSS;
+  vec2  cellPos    = repeatDomain(pos, cellSize);
+  float shapeScale = fitToCell(cellSize);
+
+  float distToEdge = sceneField(cellPos, shapeScale);
+
+  fragColor = vec4(paintLayers(distToEdge, onePixel), 1.0);
 }
 
 // * EXERCISES — roughly in order. Each builds on the last.
