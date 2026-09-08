@@ -127,6 +127,30 @@ const scene: ShaderScene = {
 export default scene;
 ```
 
+## Comment style in the scenes
+
+The scene files are the notes, not just the code, so they are long on purpose.
+One rule keeps them skimmable:
+
+**Every section heading starts with `// *`. Everything under it is plain `//`.**
+
+```glsl
+// * FIT THE ARTWORK TO THE CELL, instead of hand-tuning it to match.
+//
+// Repetition wraps the coordinate; it does not SHRINK anything, so the
+// shape constants have to be re-chosen against the cell.
+float designReach = ...
+```
+
+[Better Comments](https://marketplace.visualstudio.com/items?itemName=aaron-bond.better-comments)
+treats `*` as one of its default tags, so with that extension installed (it is
+recommended in `.vscode/extensions.json`) every heading is highlighted and a
+700-line shader skims as a list of topics. Without the extension it is still
+just a comment, so nothing breaks.
+
+One star per topic. Sub-notes, step-by-step breakdowns and commented-out
+variants stay unstarred, which is what keeps the highlighting worth having.
+
 ## Multi-pass scenes (level 4)
 
 A `ShaderScene` can declare `passes`. Each pass is an ordinary fragment shader

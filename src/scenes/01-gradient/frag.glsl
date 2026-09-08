@@ -1,4 +1,7 @@
-// Your first shader — the "hello world" of GLSL.
+// * YOUR FIRST SHADER — the "hello world" of GLSL.
+//
+// House style, repo-wide: every SECTION heading starts with `// *`, and the
+// lines under it are plain `//`, so the file skims as a list of headings.
 // This function runs ONCE PER PIXEL, in parallel, for every pixel on screen.
 // fragCoord = this pixel's position in pixels, origin at bottom-left, measured
 // at the pixel's CENTRE — so it goes 0.5, 1.5, 2.5 ... and never lands exactly
@@ -7,7 +10,7 @@
 // The uniforms iResolution / iTime are provided for you (see the engine).
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-  // Two names for the same pixel. They answer different questions, so it's
+  // * TWO NAMES FOR THE SAME PIXEL. They answer different questions, so it's
   // normal to compute both and use whichever the next line needs.
   // uv: "where am I across the picture" — gradients, tiling, sampling a texture.
   vec2 uv  = fragCoord / iResolution.xy;                          // 0..1 — image space
@@ -15,7 +18,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // by the height, so one unit across equals one unit up and circles stay round.
   vec2 pos = (2.0 * fragCoord - iResolution.xy) / iResolution.y;  // centred, square units
 
-  // fract() wraps once per 1.0 of input, so the tile count is the input's RANGE
+  // * TILE WITH fract(). It wraps once per 1.0 of input, so the tile count is the input's RANGE
   // times `tiles` — not `tiles` on its own. uv spans exactly 1.0 per axis, so
   // this gives exactly 2 x 2 tiles, each stretched by the canvas aspect ratio.
   const float tiles = 2.0;
@@ -25,6 +28,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // and a seam lands on 0.0 — the centre of the screen — since 0 is an integer.
   // vec2 cellPos = fract(pos * tiles);
 
+  // * COLOR FROM THE TILE COORDINATE.
   // cellPos.x -> red rising left to right WITHIN each tile,
   // cellPos.y -> green rising bottom to top within each tile,
   // and a blue channel that breathes over time with iTime.
@@ -33,11 +37,11 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // shorthand for RG by cellPos.x/cellPos.y
   // vec3 color = vec3(cellPos, 0.5 + 0.5 * sin(iTime));
 
-  // Output: red, green, blue, alpha.
+  // * OUTPUT: red, green, blue, alpha.
   fragColor = vec4(color, 1.0);
 }
 
-// TRY THIS:
+// * TRY THIS:
 //  • uncomment the pos line above — the seam jumps to the middle of the screen
 //  • mirror instead of wrapping, for tiling with no hard seams:
 //      vec2 cellPos = abs(fract(uv * tiles) * 2.0 - 1.0);

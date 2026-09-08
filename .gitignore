@@ -16,3 +16,5 @@ src/_parked/
 .DS_Store
 *.local
 .vite
+
+Claude outputs/

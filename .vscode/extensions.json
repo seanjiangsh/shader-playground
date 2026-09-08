@@ -5,6 +5,10 @@
     // targets ES 100 specifically, which is what this project writes.
     "raczzalan.webgl-glsl-editor",
     // Uses .prettierrc at the repo root, so formatting matches `pnpm format`.
-    "esbenp.prettier-vscode"
+    "esbenp.prettier-vscode",
+    // Paints comment headings. This repo starts every section heading with
+    // `// *`, which is one of this extension's default tags, so no settings
+    // are needed - install it and the headings light up.
+    "aaron-bond.better-comments"
   ]
 }
