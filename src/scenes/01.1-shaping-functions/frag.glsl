@@ -157,6 +157,103 @@ vec3 tileLinear(in vec2 tileUv, in float pixelY) {
   return drawGraph(tileUv, y, pixelY);
 }
 
+// * TILE 01 — SMOOTHSTEP, the ease.
+//
+// You have used smoothstep since scene 01 for anti-aliasing. This is the first
+// time you can SEE what it is: an S. Flat at both ends, steepest in the middle.
+//
+// What it actually computes, once the edges are taken care of:
+//
+//   t = clamp((x - edge0) / (edge1 - edge0), 0, 1)   where am I between them
+//   y = t * t * (3 - 2 * t)                          the S itself
+//
+// That cubic is chosen so its SLOPE is zero at t = 0 and t = 1. Which is the
+// whole point of an ease: something that starts and stops without a jerk. The
+// linear tile next door has slope 1 everywhere, including at the ends, which
+// is exactly what makes a linear animation feel mechanical.
+//
+// The gradient says it better than the graph. Look at the tile: black holds on
+// for a long time, white holds on for a long time, and the change happens in a
+// rush through the middle. That IS the ease, felt rather than plotted.
+//
+// EDGES 0.05 AND 0.95 rather than 0 and 1 — a real choice with two effects.
+// Squeezing the same S into a span of 0.9 makes it steeper: the maximum slope
+// goes from 1.5 to 1.5 / 0.9 = 1.667. And because the clamp is doing work now,
+// y is exactly 0 for the first 5% of the tile and exactly 1 for the last 5%,
+// so the curve has genuinely FLAT runs at both ends instead of just touching
+// the corners. Those runs sit right on the tile boundary and end up half
+// hidden under the border, which is what you can see at the bottom-left and
+// top-right. Not wrong, just worth knowing you chose it. smoothstep(0.0, 1.0,
+// x) gives the plain version with no flat runs.
+//
+// WATCH THE LINE WIDTH. This is the first tile steep enough to show the
+// limitation noted on plot(): it measures straight up, not perpendicular to
+// the curve. The vertical thickness is a constant 2.00 px everywhere — I
+// measured it — but the width you actually SEE is that divided by
+// sqrt(1 + slope*slope), which at the steepest point is 2 / 1.94 = 1.03 px.
+// So the line looks about half as thick through the middle as it does at the
+// ends. Nothing is broken; the ruler is just pointing the wrong way.
+vec3 tileSmoothstep(in vec2 tileUv, in float pixelY) {
+  float y = smoothstep(0.05, 0.95, tileUv.x);
+  return drawGraph(tileUv, y, pixelY);
+}
+
+// * TILES 02, 03, 04 — POWER, the bias dial.
+//
+// Three tiles, one function, one number changed. That is the point of writing
+// it with the exponent as a PARAMETER rather than as three near-identical
+// copies: pow is not three shaping functions, it is one with a dial on it.
+//
+// What the dial does, in one sentence: raising a number BETWEEN 0 AND 1 to a
+// power above 1 makes it smaller, and to a power below 1 makes it bigger. Our
+// x is always 0..1, so that is the whole behaviour.
+//
+//   exponent   at x = 0.5   the curve           the gradient
+//   --------   ----------   -----------------   ----------------------------
+//     0.5        0.707      bulges ABOVE the    brightens early, then coasts
+//                           diagonal            (most of the tile is light)
+//     1.0        0.500      IS the diagonal     even — no bias at all
+//     2.0        0.250      sags BELOW the      stays dark, rushes at the end
+//                           diagonal            (most of the tile is dark)
+//
+// 1.0 earns its slot even though it is identical to tile 00. It is the neutral
+// middle of the family, and having "no bias" drawn between the two biased ones
+// is what makes the other two readable at a glance.
+//
+// 0.5 and 2.0 are MIRROR IMAGES of each other, reflected across the diagonal.
+// That is not a coincidence: x^0.5 is the square root, which is the inverse of
+// x^2, and a function and its inverse are always reflections in the line
+// y = x. Once you see that, the whole family reads as one shape being tipped
+// one way or the other.
+//
+// Reach for it when something "ramps up too fast" or "hangs around too long".
+// A fade that feels sudden usually wants an exponent above 1; a bar that takes
+// forever to get going usually wants one below 1.
+//
+// TWO NOTES ON pow() ITSELF, since this is the first tile to use it in anger.
+//
+// It has a DOMAIN. In GLSL ES, pow(x, y) is undefined when x is negative, and
+// also when x is 0 and y is 0 or less. Here x is a tile coordinate, so it is
+// never negative, and every exponent used is positive, so we are safe — but
+// only because of those two facts, not because pow is safe in general. The
+// first attempt at this tile passed tileUv.y as the exponent, which put
+// pow(0.0, 0.0) at the tile's bottom-left corner: undefined, and drivers
+// disagree about what to return there.
+//
+// And for a SQUARE specifically, tileUv.x * tileUv.x is the better line. It is
+// one multiply, where pow usually compiles to exp2(y * log2(x)), and it has no
+// domain restrictions at all. pow earns its place the moment the exponent is
+// not a small whole number, which is exactly why 0.5 is in this family.
+//
+// WATCH THE LINE WIDTH on the 2.0 tile. It is the steepest curve in the
+// gallery so far, and plot() measures straight up rather than perpendicular to
+// the curve, so the line thins out noticeably at the right-hand end. Same
+// artifact as on smoothstep, more obvious here.
+vec3 tilePow(in vec2 tileUv, in float pixelY, in float exponent) {
+  float y = pow(tileUv.x, exponent);
+  return drawGraph(tileUv, y, pixelY);
+}
+
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
 vec3 tileTodo(in vec2 tileUv, in float pixelY) {
@@ -173,10 +270,11 @@ vec3 tileTodo(in vec2 tileUv, in float pixelY) {
 // Uncomment a line as you write each tile.
 vec3 drawTile(in int index, in vec2 tileUv, in float pixelY) {
   if (index == 0) return tileLinear(tileUv, pixelY);
-  // if (index == 1) return tileSmoothstep(tileUv, pixelY);
-  // if (index == 2) return tilePow2(tileUv, pixelY);
-  // if (index == 3) return tileSqrt(tileUv, pixelY);
-  // if (index == 4) return tileSine(tileUv, pixelY);
+  if (index == 1) return tileSmoothstep(tileUv, pixelY);
+  if (index == 2) return tilePow(tileUv, pixelY, 0.5);
+  if (index == 3) return tilePow(tileUv, pixelY, 1.0);
+  if (index == 4) return tilePow(tileUv, pixelY, 2.0);
+  // if (index == 5) return tileSine(tileUv, pixelY);
   return tileTodo(tileUv, pixelY);
 }
 
@@ -234,10 +332,22 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    already used for anti-aliasing, seen as a shape for the first time.
 //    Then try narrowing the edges: smoothstep(0.3, 0.7, x).
 //
-// 2. POWER.  y = pow(x, 2.0), then 0.5, then 5.0
+// 2. POWER.  [done — tiles 02, 03, 04 at exponents 0.5, 1.0, 2.0]
 //    Bias. Above 1.0 pushes values toward 0 (slow start, fast finish); below
-//    1.0 does the opposite. pow(x, 0.5) is sqrt(x). This is the knob to reach
-//    for when something "ramps up too fast".
+//    1.0 does the opposite, and pow(x, 0.5) is sqrt(x). The knob to reach for
+//    when something "ramps up too fast" or "hangs around too long".
+//
+//    Written as one tilePow() with the exponent as an argument, because this
+//    is one function with a dial rather than three functions. Add pow(x, 5.0)
+//    by adding one dispatch line — no new function needed. The exponent-1.0
+//    tile is deliberately a duplicate of the linear one: "no bias" needs a
+//    picture too, sitting between the two biased ones.
+//
+//    The first attempt at this was a tilePow2() with the exponent hard-coded,
+//    and it went wrong twice in a way worth remembering: the exponent was
+//    tileUv.y rather than a constant, which quietly stopped it being a
+//    function of x at all, and then the name said 2 while the body said 0.5.
+//    Both disappear once the varying part is a parameter with a name.
 //
 // 3. STEP AND CLAMP.  y = step(0.5, x), and y = clamp(x * 2.0 - 0.5, 0.0, 1.0)
 //    The hard cut, and the flattened ramp. Worth drawing once so the staircase
