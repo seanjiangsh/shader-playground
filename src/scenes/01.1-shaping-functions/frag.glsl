@@ -20,7 +20,18 @@
 //   2. THE LINE is drawn where this pixel's HEIGHT equals y. That is the
 //      function seen as a graph.
 //
-// The same number, shown twice. Cover one and you can still read the other.
+// The same number, shown twice. Cover one and you can still read the other:
+//
+//        1 +---------------------------+
+//          |                     __--''|   the LINE: this pixel is on it
+//          |               __--''      |   when its height equals y
+//     tile |         __--''            |
+//   height |   __--''                  |   the GRADIENT: this column's
+//          |--''                       |   colour IS y, so the whole column
+//        0 +---------------------------+   is one shade
+//          0          x  (0..1)        1
+//
+//          dark ......................... light      <- what the colour does
 //
 // * A NOTE ON `pct`
 //
@@ -49,14 +60,30 @@
 // and the numbering would move as you resize. The commented alternative below
 // does it the other way if you want to see the difference.
 //
-// Tiles are numbered in READING ORDER: 0 is top-left, 4 is top-right, 24 is
-// bottom-right. GL's y axis points up, which is why the row term is flipped.
+// Tiles are numbered in READING ORDER, the way you would read a page:
+//
+//        +----+----+----+----+----+
+//        |  0 |  1 |  2 |  3 |  4 |   <- top row
+//        +----+----+----+----+----+
+//        |  5 |  6 |  7 |  8 |  9 |
+//        +----+----+----+----+----+
+//        | 10 | 11 | 12 | 13 | 14 |
+//        +----+----+----+----+----+
+//        | 15 | 16 | 17 | 18 | 19 |
+//        +----+----+----+----+----+
+//        | 20 | 21 | 22 | 23 | 24 |   <- bottom row
+//        +----+----+----+----+----+
+//
+// GL's y axis points UP, so row 0 of the coordinates is the bottom one. That
+// is why the row term is flipped when the index is computed in mainImage.
 
 // * TUNING — the dials, each labelled with its space.
 const float TILES_ACROSS = 5.0;    // count
 const float TILES_DOWN   = 5.0;    // count
 const float LINE_PIXELS  = 2.0;    // screen pixels: the graph line's width
 const float BORDER_PIXELS = 1.0;   // screen pixels: the tile separator
+const float WAVE_SPEED   = 2.0;    // radians per second: how fast the wave travels
+const float PULSE_SPEED  = 1.0;    // radians per second: how fast the arch breathes
 
 // * PALETTE
 //
@@ -101,17 +128,58 @@ vec3 todoColor   = vec3(0.11, 0.10, 0.16);
 // value, with nothing left to see it by.
 //   vec3 lineColor = vec3(1.00, 0.25, 0.25);   // red, if you prefer it
 
+// * CONSTANTS
+const float PI = 3.14159265;
+const float TWO_PI = 6.28318531;
+
+// * sin01 — sine, remapped from its natural -1..1 swing into 0..1.
+//
+// This tiny function is the most reusable idea in the sine family, and naming
+// it is worth more than the characters it saves. sin() answers a question
+// about angles and hands back a number that is half negative; a tile, a colour
+// channel and a brightness all want 0..1. The `0.5 + 0.5 *` shuffle is how you
+// get from one to the other, and it turns up everywhere once you start looking.
+//
+// What it does to the number line:
+//
+//   sin gives you    -1 ---------- 0 ---------- +1
+//                     |            |            |
+//   * 0.5            -0.5 ------- 0 --------- +0.5    (half the swing)
+//                     |            |            |
+//   + 0.5             0 --------- 0.5 --------- 1     (lift the middle)
+//
+// So the two halves do two separate jobs: multiplying by 0.5 shrinks the swing
+// so it spans 1 instead of 2, and adding 0.5 moves the middle up from 0 to 0.5.
+float sin01(in float angle) {
+  return 0.5 + 0.5 * sin(angle);
+}
+
 // * PLOT — how much of this pixel the graph line covers, 0..1.
 //
 // `tileUv` is where we are inside the tile, 0..1 on both axes. `y` is the
 // function's value at tileUv.x. So abs(tileUv.y - y) is "how far above or
 // below the curve am I", and the line is everywhere that distance is small.
 //
-// That expression is a distance field, and this is the same two-step you built
-// in scene 02: subtract a half-thickness to turn the curve into a BAND, then
-// run it through a one-pixel ramp to get an anti-aliased mask. The only new
-// part is measuring the thickness in screen pixels, which needs pixelY —
-// one screen pixel expressed in tile-uv units.
+// Looking at one column of pixels, side on:
+//
+//     tileUv.y
+//        ^
+//        |   .  distToCurve is big    -> outside the line, returns 0
+//        |   .
+//        |  ---------------------------  y + half the thickness
+//        |  ~~~~~~ the curve, y ~~~~~~~  distToCurve = 0
+//        |  ---------------------------  y - half the thickness
+//        |   .
+//        |   .  distToCurve is big    -> outside the line, returns 0
+//
+// Which is the same two-step you built in scene 02, reused exactly:
+//
+//   distToCurve = abs(tileUv.y - y)        a distance field, 0 on the curve
+//   band        = distToCurve - half       NEGATIVE inside the line's band
+//   mask        = the one-pixel ramp       soft edge, no jaggies
+//
+// The only new part is measuring the thickness in screen pixels, which needs
+// pixelY — one screen pixel expressed in tile-uv units.
 //
 // The Book of Shaders writes it in one line instead:
 //
@@ -216,6 +284,19 @@ vec3 tileSmoothstep(in vec2 tileUv, in float pixelY) {
 //     2.0        0.250      sags BELOW the      stays dark, rushes at the end
 //                           diagonal            (most of the tile is dark)
 //
+// The three shapes, side by side:
+//
+//       pow(x, 0.5)        pow(x, 1.0)        pow(x, 2.0)
+//    1 |    _--''''     1 |         ,'     1 |          /
+//      |  ,'              |       ,'         |         /
+//      | /                |     ,'           |       ,'
+//      |/                 |   ,'             |    _,'
+//    0 +------------    0 + ,'--------     0 +--''-------
+//      0           1      0           1      0           1
+//
+//       fast start,       the straight       slow start,
+//       slow finish         reference        fast finish
+//
 // 1.0 earns its slot even though it is identical to tile 00. It is the neutral
 // middle of the family, and having "no bias" drawn between the two biased ones
 // is what makes the other two readable at a glance.
@@ -230,7 +311,7 @@ vec3 tileSmoothstep(in vec2 tileUv, in float pixelY) {
 // A fade that feels sudden usually wants an exponent above 1; a bar that takes
 // forever to get going usually wants one below 1.
 //
-// TWO NOTES ON pow() ITSELF, since this is the first tile to use it in anger.
+// TWO NOTES ON pow() ITSELF, since this is the first tile that really uses it.
 //
 // It has a DOMAIN. In GLSL ES, pow(x, y) is undefined when x is negative, and
 // also when x is 0 and y is 0 or less. Here x is a tile coordinate, so it is
@@ -254,6 +335,53 @@ vec3 tilePow(in vec2 tileUv, in float pixelY, in float exponent) {
   return drawGraph(tileUv, y, pixelY);
 }
 
+// * TILES 05, 06, 07 — SINE, and the first things in the gallery that MOVE.
+//
+// The idea that unlocks all of this: everything inside sin() is an ANGLE in
+// radians, and iTime is SECONDS. So any number multiplying iTime is radians
+// per second, and one full cycle takes TWO_PI divided by it. WAVE_SPEED = 2.0
+// is a cycle every 3.1 seconds. For N cycles per second, use N * TWO_PI.
+//
+// There are exactly three things you can animate in a wave, and they feel
+// completely different. Two are here; the third is exercise 4b.
+//
+//   PHASE      add to the angle       the wave slides sideways    <- tile 06
+//   AMPLITUDE  multiply the result    the wave grows and shrinks  <- tile 07
+//   FREQUENCY  multiply x             more or fewer humps         <- exercise
+//
+// Tile 05 is the still reference, and it earns its slot: motion is hard to
+// judge with nothing beside it holding still.
+
+vec3 tileSine(in vec2 tileUv, in float pixelY) {
+  float y = sin01(tileUv.x * TWO_PI);
+  return drawGraph(tileUv, y, pixelY);
+}
+
+// PHASE. Adding to the angle slides the whole wave along x — add and it
+// travels left, subtract and it travels right. Nothing about the wave's SHAPE
+// changes, which is exactly what makes it read as movement rather than as
+// distortion.
+vec3 tileSinePhase(in vec2 tileUv, in float pixelY) {
+  float y = sin01(tileUv.x * TWO_PI + iTime * WAVE_SPEED);
+  return drawGraph(tileUv, y, pixelY);
+}
+
+// AMPLITUDE. Multiplying the result scales the wave's height.
+//
+// The base here is the ARCH, sin(x * PI), not the full period the other two
+// use, and that is the right call rather than an inconsistency. The arch
+// already sits on zero at both ends, so scaling it down reads as deflating.
+// Scale a full 0..1 period instead and the whole wave sinks toward black,
+// which reads as the graph falling out of the tile rather than as a pulse.
+//
+// sin01 is doing a second, different job here. Its output is the MULTIPLIER,
+// and a multiplier has to stay in 0..1 or a negative one would flip the arch
+// upside down and out of sight. Same helper, opposite end of the expression.
+vec3 tileSineAmplitude(in vec2 tileUv, in float pixelY) {
+  float y = sin(tileUv.x * PI) * sin01(iTime * PULSE_SPEED);
+  return drawGraph(tileUv, y, pixelY);
+}
+
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
 vec3 tileTodo(in vec2 tileUv, in float pixelY) {
@@ -274,7 +402,9 @@ vec3 drawTile(in int index, in vec2 tileUv, in float pixelY) {
   if (index == 2) return tilePow(tileUv, pixelY, 0.5);
   if (index == 3) return tilePow(tileUv, pixelY, 1.0);
   if (index == 4) return tilePow(tileUv, pixelY, 2.0);
-  // if (index == 5) return tileSine(tileUv, pixelY);
+  if (index == 5) return tileSine(tileUv, pixelY);
+  if (index == 6) return tileSinePhase(tileUv, pixelY);
+  if (index == 7) return tileSineAmplitude(tileUv, pixelY);
   return tileTodo(tileUv, pixelY);
 }
 
@@ -353,10 +483,30 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    The hard cut, and the flattened ramp. Worth drawing once so the staircase
 //    edges of step() are a picture rather than a warning.
 //
-// 4. SINE.  y = 0.5 + 0.5 * sin(x * 6.2831)
-//    The 0.5 + 0.5 * pattern you have written many times, finally graphed. One
-//    full period across the tile because 6.2831 is 2*PI. Multiply x by 2.0 for
-//    two humps.
+// 4. SINE.  [done — tiles 05, 06, 07: still, phase, amplitude]
+//    The 0.5 + 0.5 * pattern you have written many times, finally graphed, and
+//    now pulled out into sin01() because it is the reusable half of the idea.
+//    One full period across the tile, because TWO_PI is one whole turn.
+//
+//    Half a period, sin(x * PI), is worth knowing as its own trick: over the
+//    range 0..PI sine never goes negative, so it lands in 0..1 with no
+//    remapping at all. That is the arch tile 07 pulses. Reach for a full
+//    period when you want a wave, the arch when you want a single hump.
+//
+//    The general lesson is about RANGE. sin swings -1..1 and a tile shows
+//    0..1, so more than half the answer is off-screen unless you remap it.
+//    Seen once without the remap: the second half of the wave simply left the
+//    tile and the gradient clamped to flat black. Not broken, out of frame —
+//    a reflex worth building for every function whose output is not already
+//    0..1.
+//
+// 4b. SINE, THE THIRD KNOB: FREQUENCY.  y = sin01(x * TWO_PI * humps)
+//    Phase and amplitude are done; frequency is the one left, and the one with
+//    a trap in it. sin(x * iTime) looks reasonable and is wrong: iTime grows
+//    forever, so the humps get denser without limit until the tile is a grey
+//    blur. Animate between two fixed values instead:
+//      float humps = mix(1.0, 4.0, sin01(iTime));
+//    Worth writing the broken version first and watching it for ten seconds.
 //
 // 5. FRACT AND MOD.  y = fract(x * 3.0), y = mod(x * 3.0, 1.0)
 //    Sawtooth. The vertical jumps show why fract() tiles and why the seam is

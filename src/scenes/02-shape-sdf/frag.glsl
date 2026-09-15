@@ -41,6 +41,21 @@
 //   4. outline      ink painted over both                     (mix, by band)
 //   5. contours     the field itself, drawn on top            (add)
 //
+// Stacked, with the viewer looking down from the top:
+//
+//        you
+//         |
+//         v
+//     ~~~~~~~~~~~~~~~~~~~~~~~~   5. contours   drawn last, so on top
+//     ========================   4. outline
+//     ########################   3. fill
+//     ::::::::::::::::::::::::   2. glow
+//     ------------------------   1. background  painted first, so underneath
+//
+// Each layer can only cover what is already below it, never what comes after.
+// That is why the glow sits UNDER the fill: the glow is 1.0 everywhere inside
+// the shape, and letting the fill cover it is simpler than masking it out.
+//
 // Each step takes the picture so far and puts something on top of it. Read the
 // mix() arguments off what each mask MEANS and the order writes itself: a mask
 // here is always OUTSIDE-ness, 0 on the thing and 1 away from it, and
@@ -219,7 +234,19 @@ float pixelSize() {
 //   * cellSize                    that centre's position
 //   pos - (...)                   where I am RELATIVE to my own cell centre
 //
-// so the result only ever spans -cellSize/2 .. +cellSize/2. The + 0.5 is what
+// Following one axis through it, with cellSize = 0.5:
+//
+//   pos        -1.0    -0.5     0.0     0.5     1.0        the whole axis
+//                |       |       |       |       |
+//   nearest      |       |       |       |       |         each pixel picks
+//   centre    -1.0    -0.5     0.0     0.5     1.0         the centre it is
+//                |       |       |       |       |         closest to
+//                v       v       v       v       v
+//   cellPos      0       0       0       0       0         and reports its
+//             -.25 +.25  -.25 +.25  -.25 +.25              offset from it
+//
+// so the result only ever spans -cellSize/2 .. +cellSize/2, no matter how far
+// out `pos` goes. The whole plane gets folded into one cell. The + 0.5 is what
 // centres a cell on the origin; a plain floor() would put a cell CORNER there
 // instead. One fold, no loop: a thousand copies cost what one costs.
 //
@@ -270,6 +297,21 @@ vec2 repeatDomain(in vec2 pos, in float cellSize) {
 // the picture should re-tile with every shape keeping its proportions and its
 // share of the cell. Measured across three cell sizes, the fraction of each
 // cell covered by the artwork stayed identical to three decimal places.
+// What the numbers mean, drawn:
+//
+//     +-------------------------+  <- the cell, cellSize across
+//     |         . - - .         |
+//     |      ,'         `.      |  designReach = how far the artwork
+//     |    /               \    |                reaches from its centre
+//     |   |        +--------|---|  <- half a cell: the whole budget
+//     |   |       (o)       |   |
+//     |    \               /    |  CELL_FILL shrinks that reach to
+//     |      `.         ,'      |  80% of the budget, leaving a gutter
+//     |         ` - - '         |
+//     +-------------------------+
+//
+//   shapeScale = (what there is) / (what was asked for)
+//              = CELL_FILL * half a cell / designReach
 float fitToCell(in float cellSize) {
   float designReach = max(length(SHAPE_OFFSET) + CIRCLE_RADIUS,
                           length(SHAPE_OFFSET + BOX_HALF_SIZE));
@@ -426,6 +468,16 @@ float sceneField(in vec2 cellPos, in float shapeScale) {
 // new field ever needs its own bespoke masking formula, it is not really a
 // distance field.
 //
+// What the ramp looks like across the edge, one pixel wide:
+//
+//   mask  1 |             ,-------------   fully outside
+//           |           ,'
+//        0.5|         ,'                   exactly on the edge
+//           |       ,'
+//         0 |-------'                      fully inside
+//           +-------+---+-------
+//              -0.5  0  +0.5   <- dist, measured in pixels
+//
 // Three ways to do this, cheapest last:
 //   step(0.0, dist)                        jagged, no anti-aliasing at all
 //   smoothstep(-onePixel, onePixel, dist)  centred, but two pixels wide
@@ -447,6 +499,27 @@ float coverage(in float dist, in float onePixel) {
 // every value becomes "how far from the edge", either side. The zero set does
 // not move, which means abs(dist) is still a distance field, and the shape it
 // describes is the original outline: a curve with no interior.
+//
+// Reading a slice straight through the shape, and plotting the field's value
+// along the way. Three steps, three pictures:
+//
+//   dist            \                       /      positive outside
+//                    \                     /
+//        0  ----------\-------------------/------  zero ON the edge
+//                      \                 /
+//                       \_______________/          negative inside
+//
+//   abs(dist)       \       _________       /      the fold. The inside
+//                    \    _/         \_    /       comes back up as
+//        0  ----------V--/-------------\--V------  positive, and the two
+//                                                   zeros are the two sides
+//                                                   of the outline
+//
+//   abs(dist)       \      _________      /        the whole shape drops by
+//   - thickness      \   _/         \_   /         the thickness, so it now
+//        0  ----------\-/-------------\-/-------   crosses zero TWICE
+//                      V               V
+//                     [=]             [=]          below zero = ON the line
 //
 // Subtracting a thickness then inflates that curve into a band. The new zero
 // set is where abs(dist) == thickness, one contour either side of the original

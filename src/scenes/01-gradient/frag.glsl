@@ -12,6 +12,21 @@
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // * TWO NAMES FOR THE SAME PIXEL. They answer different questions, so it's
   // normal to compute both and use whichever the next line needs.
+  //
+  // The same screen, labelled two ways (a = width / height, the aspect):
+  //
+  //        uv  — corner to corner              pos — centred, square
+  //
+  //     (0,1) +-------------+ (1,1)      (-a,1) +-------------+ (a,1)
+  //           |             |                   |             |
+  //           |             |                   |      + (0,0)|
+  //           |             |                   |             |
+  //     (0,0) +-------------+ (1,0)     (-a,-1) +-------------+ (a,-1)
+  //
+  //   0..1 on BOTH axes, so a               -1..1 up, wider than that
+  //   square of uv is a rectangle           across, so a square of pos
+  //   on a non-square window                really is square on screen
+  //
   // uv: "where am I across the picture" — gradients, tiling, sampling a texture.
   vec2 uv  = fragCoord / iResolution.xy;                          // 0..1 — image space
   // pos: "where am I in space" — distance, shapes, rotation. BOTH axes are divided
@@ -21,6 +36,22 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // * TILE WITH fract(). It wraps once per 1.0 of input, so the tile count is the input's RANGE
   // times `tiles` — not `tiles` on its own. uv spans exactly 1.0 per axis, so
   // this gives exactly 2 x 2 tiles, each stretched by the canvas aspect ratio.
+  //
+  // Following one axis through the two steps:
+  //
+  //   uv              0 ------------------------- 1      spans 1.0
+  //                             |
+  //                             | * tiles (2.0)
+  //                             v
+  //   uv * tiles      0 ------------ 1 ------------ 2     spans 2.0
+  //                             |
+  //                             | fract() throws away the whole number
+  //                             v
+  //   cellPos         0 ------- 1  0 ------- 1            2 tiles, seam at 1
+  //
+  // So the tile count is how many INTEGERS the input crosses, which is its
+  // range times `tiles`. That is the whole rule, and it is why swapping in
+  // `pos` below changes the count without changing this line.
   const float tiles = 2.0;
   vec2 cellPos = fract(uv * tiles);
   // Swap in pos and the same `tiles` gives 4 rows and 4 x aspect columns, because
