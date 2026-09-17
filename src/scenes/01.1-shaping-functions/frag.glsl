@@ -193,11 +193,38 @@ float sin01(in float angle) {
 //
 // HONEST LIMITATION: abs(tileUv.y - y) measures straight UP, not perpendicular
 // to the curve. Where the curve is steep the true distance is shorter than the
-// vertical one, so the line looks thinner there. Watch it on a steep pow()
-// curve and you will see it. The proper fix divides by sqrt(1 + slope*slope),
-// which means knowing the derivative; the usual shortcut is fwidth(), and that
-// needs an extension WebGL 1 does not give us by default. Live with it for
-// now, but know it is there.
+// vertical one, so the line looks thinner there — and past a certain steepness
+// it stops being a line at all and becomes a row of dashes. Tile 08 at two
+// humps is the first place it is unmistakable; the numbers are in its comment.
+//
+//     measured UP           measured PERPENDICULAR
+//                                   /
+//        |  /                      /|
+//        | /  <- the band is      / |  <- the band stays the same width
+//        |/      LINE_PIXELS     /  |     whichever way the curve leans
+//       /|       tall, so a     /   |
+//      / |       steep curve   /
+//               gets a thin
+//               sliver of it
+//
+// The correction is one multiply: the vertical band has to grow by
+// sqrt(1 + slope*slope). Three ways to get the slope, worst to best:
+//
+//   1. Raise LINE_PIXELS until the dashes overlap. Works, but it fattens the
+//      flat parts too — the wrong lever for a steep-curve problem.
+//   2. Ask the tile for a second sample and difference them:
+//        slope = (yAt(x + pixelX) - yAt(x)) / pixelX
+//      No calculus, works for any function, costs one extra evaluation. It
+//      does mean drawGraph grows an argument and every tile passes two y's.
+//   3. fwidth(y) — ask the GPU how much y changed between neighbouring pixels.
+//      One line, no second sample. It needs the OES_standard_derivatives
+//      extension, which WebGL 1 does not switch on by default but which is
+//      available essentially everywhere in practice (measured at 99.97% of
+//      devices on web3dsurvey.com, 97% on caniuse). Turning it on is a small
+//      engine change: gl.getExtension('OES_standard_derivatives') plus an
+//      `#extension GL_OES_standard_derivatives : enable` line in the injected
+//      header, and the same line in scripts/check-shaders.mjs so the validator
+//      still matches what the engine builds.
 float plot(in vec2 tileUv, in float y, in float pixelY) {
   float distToCurve = abs(tileUv.y - y);
   float band = distToCurve - 0.5 * LINE_PIXELS * pixelY;
@@ -382,6 +409,54 @@ vec3 tileSineAmplitude(in vec2 tileUv, in float pixelY) {
   return drawGraph(tileUv, y, pixelY);
 }
 
+// FREQUENCY, the third knob. Multiplying x decides how many humps fit across
+// the tile.
+//
+// The trap avoided here: sin(tileUv.x * iTime) looks reasonable and is wrong,
+// because iTime grows forever, so the humps get denser without limit until
+// the tile is a grey blur. mix() between two fixed values keeps it bounded,
+// and the wave breathes instead of running away.
+//
+// The 0 end of the range is worth watching rather than treating as a corner
+// case. At humps = 0 the angle is 0 everywhere, sin(0) is 0, and sin01 turns
+// that into 0.5 — so the tile flattens to mid grey with a straight line
+// through the middle. "No wave" is not a broken wave, it is a flat one.
+//
+// Unlike tile 06, this does not TRAVEL, it STRETCHES. The angle at any point
+// is TWO_PI * humps * x, which stays 0 at x = 0 whatever humps does, so the
+// left edge is pinned and every point moves more the further right it sits.
+// Watch the two tiles side by side: one slides bodily, one accordions.
+//
+// THE LINE GOES DOTTED at the busy end, and this is the tile that finally
+// makes plot()'s limitation impossible to ignore. plot() lights a band
+// measured straight UP, LINE_PIXELS tall, which is 2 screen pixels. But on a
+// 180 x 120 tile the steepest part of the wave climbs:
+//
+//     humps = 1     2.1 screen pixels of rise per column   (just about joins)
+//     humps = 2     4.2 screen pixels of rise per column   (visible dashes)
+//     humps = 3     6.3 screen pixels of rise per column   (clearly dotted)
+//
+// Every column IS lit — none are skipped — but each column's 2-pixel dash
+// sits several pixels above its neighbour, so the dashes never touch:
+//
+//     column:  1     2     3     4
+//                               [=]      each dash is LINE_PIXELS tall
+//                         [=]
+//                   [=]                  but the next one is 4 px away
+//              [=]
+//
+// On the flat parts the rise per column is nearly zero, the dashes overlap,
+// and the line looks solid. That is why it only breaks up where it is steep.
+// The fix is to measure PERPENDICULAR to the curve rather than vertically,
+// which means the band has to grow by sqrt(1 + slope*slope) — see the note on
+// plot() for the three ways to get that slope.
+vec3 tileSineFrequency(in vec2 tileUv, in float pixelY) {
+  float humps = mix(0.0, 2.0, sin01(iTime));
+  float y = sin01(tileUv.x * TWO_PI * humps);
+  return drawGraph(tileUv, y, pixelY);
+}
+
+
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
 vec3 tileTodo(in vec2 tileUv, in float pixelY) {
@@ -405,6 +480,7 @@ vec3 drawTile(in int index, in vec2 tileUv, in float pixelY) {
   if (index == 5) return tileSine(tileUv, pixelY);
   if (index == 6) return tileSinePhase(tileUv, pixelY);
   if (index == 7) return tileSineAmplitude(tileUv, pixelY);
+  if (index == 8) return tileSineFrequency(tileUv, pixelY);
   return tileTodo(tileUv, pixelY);
 }
 
@@ -500,13 +576,21 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    a reflex worth building for every function whose output is not already
 //    0..1.
 //
-// 4b. SINE, THE THIRD KNOB: FREQUENCY.  y = sin01(x * TWO_PI * humps)
-//    Phase and amplitude are done; frequency is the one left, and the one with
-//    a trap in it. sin(x * iTime) looks reasonable and is wrong: iTime grows
+// 4b. SINE, THE THIRD KNOB: FREQUENCY.  [done — tile 08]
+//    float humps = mix(0.0, 2.0, sin01(iTime));
+//    y = sin01(x * TWO_PI * humps)
+//
+//    The trap is that sin(x * iTime) looks reasonable and is wrong: iTime grows
 //    forever, so the humps get denser without limit until the tile is a grey
-//    blur. Animate between two fixed values instead:
-//      float humps = mix(1.0, 4.0, sin01(iTime));
-//    Worth writing the broken version first and watching it for ten seconds.
+//    blur. mix() between two fixed values keeps it bounded. Worth writing the
+//    broken version once and watching it for ten seconds.
+//
+//    Two things this tile taught that were not about frequency at all. Zero
+//    humps is a flat line at 0.5, not a bug — "no wave" is a wave with nothing
+//    left in it. And it is the first tile steep enough to break the graph line
+//    into dashes, which turned plot()'s vertical-measurement note from a
+//    footnote into something you can see. Numbers and the fix are in the
+//    tile's comment.
 //
 // 5. FRACT AND MOD.  y = fract(x * 3.0), y = mod(x * 3.0, 1.0)
 //    Sawtooth. The vertical jumps show why fract() tiles and why the seam is
