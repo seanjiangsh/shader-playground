@@ -178,8 +178,9 @@ float sin01(in float angle) {
 //   band        = distToCurve - half       NEGATIVE inside the line's band
 //   mask        = the one-pixel ramp       soft edge, no jaggies
 //
-// The only new part is measuring the thickness in screen pixels, which needs
-// pixelY — one screen pixel expressed in tile-uv units.
+// Everything here is converted to SCREEN PIXELS first and kept there, which is
+// why the ramp is a bare `0.5 + band` with nothing to divide by: once the
+// numbers are in pixels, "one pixel wide" is literally 1.0.
 //
 // The Book of Shaders writes it in one line instead:
 //
@@ -191,54 +192,102 @@ float sin01(in float angle) {
 // falling S-curve, which softens the edge over a fixed 0.02 rather than over
 // one pixel, so it looks blurrier than it needs to.
 //
-// HONEST LIMITATION: abs(tileUv.y - y) measures straight UP, not perpendicular
-// to the curve. Where the curve is steep the true distance is shorter than the
-// vertical one, so the line looks thinner there — and past a certain steepness
-// it stops being a line at all and becomes a row of dashes. Tile 08 at two
-// humps is the first place it is unmistakable; the numbers are in its comment.
+// * MEASURING THE WIDTH THE RIGHT WAY — why plot() takes TWO y values.
 //
-//     measured UP           measured PERPENDICULAR
-//                                   /
-//        |  /                      /|
-//        | /  <- the band is      / |  <- the band stays the same width
-//        |/      LINE_PIXELS     /  |     whichever way the curve leans
-//       /|       tall, so a     /   |
-//      / |       steep curve   /
-//               gets a thin
-//               sliver of it
+// abs(tileUv.y - y) measures straight UP, not perpendicular to the curve. On a
+// flat stretch those are the same thing. On a steep one they are not, and the
+// gap gets bad fast: the line first looks thinner than asked for, then stops
+// being a line at all and breaks into a row of dashes.
 //
-// The correction is one multiply: the vertical band has to grow by
-// sqrt(1 + slope*slope). Three ways to get the slope, worst to best:
+//     measured UP                    measured PERPENDICULAR
+//                                            /
+//        |  /                               /|
+//        | /   the band is LINE_PIXELS     / |   the band is LINE_PIXELS
+//        |/    tall, so a steep curve     /  |   wide whichever way the
+//       /|     only gets a thin sliver   /   |   curve happens to lean
+//      / |     of it                    /
 //
-//   1. Raise LINE_PIXELS until the dashes overlap. Works, but it fattens the
-//      flat parts too — the wrong lever for a steep-curve problem.
-//   2. Ask the tile for a second sample and difference them:
-//        slope = (yAt(x + pixelX) - yAt(x)) / pixelX
-//      No calculus, works for any function, costs one extra evaluation. It
-//      does mean drawGraph grows an argument and every tile passes two y's.
-//   3. fwidth(y) — ask the GPU how much y changed between neighbouring pixels.
-//      One line, no second sample. It needs the OES_standard_derivatives
-//      extension, which WebGL 1 does not switch on by default but which is
-//      available essentially everywhere in practice (measured at 99.97% of
-//      devices on web3dsurvey.com, 97% on caniuse). Turning it on is a small
-//      engine change: gl.getExtension('OES_standard_derivatives') plus an
-//      `#extension GL_OES_standard_derivatives : enable` line in the injected
-//      header, and the same line in scripts/check-shaders.mjs so the validator
-//      still matches what the engine builds.
-float plot(in vec2 tileUv, in float y, in float pixelY) {
-  float distToCurve = abs(tileUv.y - y);
-  float band = distToCurve - 0.5 * LINE_PIXELS * pixelY;
-  return 1.0 - clamp(0.5 + band / pixelY, 0.0, 1.0);
+// Why dashes and not just a thin line: the band only covers LINE_PIXELS of
+// height per column, but a steep curve climbs more than that between one
+// column and the next, so each column's little dash sits above the previous
+// one with a gap in between. Tile 08 at two humps climbs 4.2 pixels per column
+// against a 2 pixel band, which is exactly what you see.
+//
+// THE CORRECTION is one multiply. A right triangle with a run of 1 and a rise
+// of `slope` has a hypotenuse of sqrt(1 + slope*slope), and that is the factor
+// between measuring up and measuring across:
+//
+//       perpendicular distance = vertical distance / sqrt(1 + slope*slope)
+//
+//   flat,  slope 0   ->  sqrt(1)    = 1.0    no change at all
+//   steep, slope 4   ->  sqrt(17)   = 4.1    the vertical band must be 4x
+//                                            taller to stay 1x wide
+//
+// GETTING THE SLOPE without any calculus: ask the tile's own function twice, a
+// single pixel apart, and take rise over run. That is why every tile now
+// passes `y` and `yNext`, and why the formula for each tile lives in its own
+// little f...() function — evaluating the same formula at two places is only
+// safe if there is exactly ONE copy of it to keep in step.
+//
+// The run is one screen pixel by construction, so the slope is just the rise,
+// expressed in screen pixels. Two other ways to get it, for the record:
+// raising LINE_PIXELS until the dashes overlap (works, but fattens the flat
+// parts too — the wrong lever), and fwidth(), which asks the GPU directly.
+// fwidth is one line and no second sample, but it needs the
+// OES_standard_derivatives extension: available on essentially every device in
+// practice (99.97% on web3dsurvey.com, 97% on caniuse) but off by default in
+// WebGL 1, so switching it on means an engine change and a matching line in
+// scripts/check-shaders.mjs. The finite difference needs neither, and doing it
+// by hand once is what makes fwidth make sense later.
+float plot(in vec2 tileUv, in vec2 tilePixel, in float y, in float yNext) {
+  // The rise between the two samples, in SCREEN pixels. Both halves have to be
+  // in the same units or the triangle is wrong — this is the units trap the
+  // whole file keeps coming back to. The run is 1 screen pixel by
+  // construction, because that is the step the tile took.
+  float slope = (yNext - y) / tilePixel.y;
+  float widen = sqrt(1.0 + slope * slope);
+
+  // Vertical distance to the curve, in screen pixels, then divided by widen to
+  // turn it into the perpendicular distance.
+  float distPixels = abs(tileUv.y - y) / tilePixel.y;
+  float perpPixels = distPixels / widen;
+
+  // Now everything is in pixels: subtract half the line width, and the ramp is
+  // one pixel wide with nothing left to convert.
+  float band = perpPixels - 0.5 * LINE_PIXELS;
+  return 1.0 - clamp(0.5 + band, 0.0, 1.0);
 }
 
 // * PAINT ONE GRAPH — the body every tile shares.
 //
-// Hand it the y you computed and it does the rest: colour by the value, then
-// draw the line on top. So a new tile is one line of maths plus one call.
-vec3 drawGraph(in vec2 tileUv, in float y, in float pixelY) {
+// Hand it the two y values and it does the rest: colour by the value at this
+// pixel, then draw the line on top. The gradient only ever uses `y`; `yNext`
+// exists purely so plot() can work out how steep the curve is here.
+vec3 drawGraph(in vec2 tileUv, in vec2 tilePixel, in float y, in float yNext) {
   vec3 color = mix(lowColor, highColor, y);
-  float lineCoverage = plot(tileUv, y, pixelY);
+  float lineCoverage = plot(tileUv, tilePixel, y, yNext);
   return mix(color, lineColor, lineCoverage);
+}
+
+// * THE SHAPE FUNCTIONS — one per tile, x in and y out, and nothing else.
+//
+// These exist because each formula now has to be evaluated TWICE, at x and at
+// x one pixel to the right. Writing it out twice inside the tile would work
+// and would be a trap: change one copy, forget the other, and the line's width
+// silently goes wrong in a way no compiler can catch. One named function, two
+// calls, no way to drift.
+//
+// They also read as a list of the gallery's contents, which is a nice
+// side-effect of pulling them out.
+float fLinear(in float x)                     { return x; }
+float fSmoothstep(in float x)                 { return smoothstep(0.05, 0.95, x); }
+float fPow(in float x, in float exponent)     { return pow(x, exponent); }
+float fSine(in float x)                       { return sin01(x * TWO_PI); }
+float fSinePhase(in float x)                  { return sin01(x * TWO_PI + iTime * WAVE_SPEED); }
+float fSineAmplitude(in float x)              { return sin(x * PI) * sin01(iTime * PULSE_SPEED); }
+float fSineFrequency(in float x) {
+  float humps = mix(0.0, 2.0, sin01(iTime));
+  return sin01(x * TWO_PI * humps);
 }
 
 // * TILE 00 — LINEAR, y = x.
@@ -247,9 +296,9 @@ vec3 drawGraph(in vec2 tileUv, in float y, in float pixelY) {
 // misread: the value rises evenly from 0 on the left to 1 on the right, so the
 // gradient is even and the graph is the diagonal. Every other tile in the
 // gallery is a comparison against this one.
-vec3 tileLinear(in vec2 tileUv, in float pixelY) {
-  float y = tileUv.x;
-  return drawGraph(tileUv, y, pixelY);
+vec3 tileLinear(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fLinear(x), fLinear(x + tilePixel.x));
 }
 
 // * TILE 01 — SMOOTHSTEP, the ease.
@@ -288,9 +337,9 @@ vec3 tileLinear(in vec2 tileUv, in float pixelY) {
 // sqrt(1 + slope*slope), which at the steepest point is 2 / 1.94 = 1.03 px.
 // So the line looks about half as thick through the middle as it does at the
 // ends. Nothing is broken; the ruler is just pointing the wrong way.
-vec3 tileSmoothstep(in vec2 tileUv, in float pixelY) {
-  float y = smoothstep(0.05, 0.95, tileUv.x);
-  return drawGraph(tileUv, y, pixelY);
+vec3 tileSmoothstep(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fSmoothstep(x), fSmoothstep(x + tilePixel.x));
 }
 
 // * TILES 02, 03, 04 — POWER, the bias dial.
@@ -357,9 +406,9 @@ vec3 tileSmoothstep(in vec2 tileUv, in float pixelY) {
 // gallery so far, and plot() measures straight up rather than perpendicular to
 // the curve, so the line thins out noticeably at the right-hand end. Same
 // artifact as on smoothstep, more obvious here.
-vec3 tilePow(in vec2 tileUv, in float pixelY, in float exponent) {
-  float y = pow(tileUv.x, exponent);
-  return drawGraph(tileUv, y, pixelY);
+vec3 tilePow(in vec2 tileUv, in vec2 tilePixel, in float exponent) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fPow(x, exponent), fPow(x + tilePixel.x, exponent));
 }
 
 // * TILES 05, 06, 07 — SINE, and the first things in the gallery that MOVE.
@@ -379,18 +428,18 @@ vec3 tilePow(in vec2 tileUv, in float pixelY, in float exponent) {
 // Tile 05 is the still reference, and it earns its slot: motion is hard to
 // judge with nothing beside it holding still.
 
-vec3 tileSine(in vec2 tileUv, in float pixelY) {
-  float y = sin01(tileUv.x * TWO_PI);
-  return drawGraph(tileUv, y, pixelY);
+vec3 tileSine(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fSine(x), fSine(x + tilePixel.x));
 }
 
 // PHASE. Adding to the angle slides the whole wave along x — add and it
 // travels left, subtract and it travels right. Nothing about the wave's SHAPE
 // changes, which is exactly what makes it read as movement rather than as
 // distortion.
-vec3 tileSinePhase(in vec2 tileUv, in float pixelY) {
-  float y = sin01(tileUv.x * TWO_PI + iTime * WAVE_SPEED);
-  return drawGraph(tileUv, y, pixelY);
+vec3 tileSinePhase(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fSinePhase(x), fSinePhase(x + tilePixel.x));
 }
 
 // AMPLITUDE. Multiplying the result scales the wave's height.
@@ -404,9 +453,9 @@ vec3 tileSinePhase(in vec2 tileUv, in float pixelY) {
 // sin01 is doing a second, different job here. Its output is the MULTIPLIER,
 // and a multiplier has to stay in 0..1 or a negative one would flip the arch
 // upside down and out of sight. Same helper, opposite end of the expression.
-vec3 tileSineAmplitude(in vec2 tileUv, in float pixelY) {
-  float y = sin(tileUv.x * PI) * sin01(iTime * PULSE_SPEED);
-  return drawGraph(tileUv, y, pixelY);
+vec3 tileSineAmplitude(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fSineAmplitude(x), fSineAmplitude(x + tilePixel.x));
 }
 
 // FREQUENCY, the third knob. Multiplying x decides how many humps fit across
@@ -450,16 +499,15 @@ vec3 tileSineAmplitude(in vec2 tileUv, in float pixelY) {
 // The fix is to measure PERPENDICULAR to the curve rather than vertically,
 // which means the band has to grow by sqrt(1 + slope*slope) — see the note on
 // plot() for the three ways to get that slope.
-vec3 tileSineFrequency(in vec2 tileUv, in float pixelY) {
-  float humps = mix(0.0, 2.0, sin01(iTime));
-  float y = sin01(tileUv.x * TWO_PI * humps);
-  return drawGraph(tileUv, y, pixelY);
+vec3 tileSineFrequency(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fSineFrequency(x), fSineFrequency(x + tilePixel.x));
 }
 
 
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
-vec3 tileTodo(in vec2 tileUv, in float pixelY) {
+vec3 tileTodo(in vec2 tileUv, in vec2 tilePixel) {
   return todoColor;
 }
 
@@ -471,17 +519,17 @@ vec3 tileTodo(in vec2 tileUv, in float pixelY) {
 // in a tile, which is the case GPUs handle best.
 //
 // Uncomment a line as you write each tile.
-vec3 drawTile(in int index, in vec2 tileUv, in float pixelY) {
-  if (index == 0) return tileLinear(tileUv, pixelY);
-  if (index == 1) return tileSmoothstep(tileUv, pixelY);
-  if (index == 2) return tilePow(tileUv, pixelY, 0.5);
-  if (index == 3) return tilePow(tileUv, pixelY, 1.0);
-  if (index == 4) return tilePow(tileUv, pixelY, 2.0);
-  if (index == 5) return tileSine(tileUv, pixelY);
-  if (index == 6) return tileSinePhase(tileUv, pixelY);
-  if (index == 7) return tileSineAmplitude(tileUv, pixelY);
-  if (index == 8) return tileSineFrequency(tileUv, pixelY);
-  return tileTodo(tileUv, pixelY);
+vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
+  if (index == 0) return tileLinear(tileUv, tilePixel);
+  if (index == 1) return tileSmoothstep(tileUv, tilePixel);
+  if (index == 2) return tilePow(tileUv, tilePixel, 0.5);
+  if (index == 3) return tilePow(tileUv, tilePixel, 1.0);
+  if (index == 4) return tilePow(tileUv, tilePixel, 2.0);
+  if (index == 5) return tileSine(tileUv, tilePixel);
+  if (index == 6) return tileSinePhase(tileUv, tilePixel);
+  if (index == 7) return tileSineAmplitude(tileUv, tilePixel);
+  if (index == 8) return tileSineFrequency(tileUv, tilePixel);
+  return tileTodo(tileUv, tilePixel);
 }
 
 // * TILE BORDER — a thin separator so empty tiles still read as tiles.
@@ -520,7 +568,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   // has to be flipped to count downward.
   int index = int(tileId.x) + int((TILES_DOWN - 1.0) - tileId.y) * int(TILES_ACROSS);
 
-  vec3 color = drawTile(index, tileUv, tilePixel.y);
+  vec3 color = drawTile(index, tileUv, tilePixel);
   color = mix(color, borderColor, tileBorder(tileUv, tilePixel));
 
   fragColor = vec4(color, 1.0);
