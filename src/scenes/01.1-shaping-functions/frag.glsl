@@ -247,6 +247,32 @@ float plot(in vec2 tileUv, in vec2 tilePixel, in float y, in float yNext) {
   float slope = (yNext - y) / tilePixel.y;
   float widen = sqrt(1.0 + slope * slope);
 
+  // DON'T DRAW ACROSS A JUMP. A cliff looks like an enormous slope, so widen
+  // grows enormous with it and the band ends up tall enough to paint a vertical
+  // line joining the two sides of the gap — see tile 09, where fract falls off
+  // its tooth. A line plotter would draw that connector, because it joins the
+  // samples it was given. We refuse: fract has no value at the jump, so there
+  // is nothing there to plot, and leaving the gap says so.
+  //
+  //     drawn (a plotter's view)        left out (ours)
+  //
+  //       /|  /|  /|                      /   /   /
+  //      / | / | / |                     /   /   /
+  //     /  |/  |/  |                    /   /   /
+  //
+  // 20 is not arbitrary, and the first guess at it was wrong twice over, which
+  // is the part worth keeping. Measured across every tile in the gallery, the
+  // steepest HONEST slope is pow(x, 0.5) at its left edge, at 8.9 pixels per
+  // pixel, while fract's cliff reads 118. A cap of 8 — the obvious first
+  // number — would have clipped tile 02 without anyone noticing. And CAPPING
+  // widen rather than refusing outright does not remove the connector, it only
+  // shortens it: at a cap of 20 the column still lights 21 pixels instead of
+  // 105. Two plausible ideas, both wrong, both cheap to check by measuring.
+  //
+  // Anything from roughly 10 to 100 separates an honest slope from a cliff, so
+  // 20 sits with room on both sides.
+  if (abs(slope) > 20.0) return 0.0;
+
   // Vertical distance to the curve, in screen pixels, then divided by widen to
   // turn it into the perpendicular distance.
   float distPixels = abs(tileUv.y - y) / tilePixel.y;
@@ -289,6 +315,7 @@ float fSineFrequency(in float x) {
   float humps = mix(0.0, 2.0, sin01(iTime));
   return sin01(x * TWO_PI * humps);
 }
+float fFract(in float x) { return fract(x * 3.0); }
 
 // * TILE 00 — LINEAR, y = x.
 //
@@ -504,6 +531,60 @@ vec3 tileSineFrequency(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fSineFrequency(x), fSineFrequency(x + tilePixel.x));
 }
 
+// * TILE 09 — FRACT, the sawtooth, and the first BROKEN curve in the gallery.
+//
+// fract() keeps the fractional part and throws the whole number away, so as x
+// climbs it ramps 0 up to 1, drops instantly back to 0, and does it again. The
+// * 3.0 is the tile-count rule from scene 01: x spans 1.0, so multiplying by 3
+// makes it cross three integers, and you get three teeth.
+//
+//   y  1 |   /|   /|   /|
+//        |  / |  / |  / |      each tooth ramps up...
+//        | /  | /  | /  |
+//      0 |/   |/   |/   |      ...then falls off a cliff
+//        +---------------
+//        0              1
+//
+// The gradient says it just as loudly: three black-to-white sweeps with a hard
+// seam between them. That seam is exactly the one you met in scene 01 when
+// fract() first tiled the screen — same function, now drawn as a graph instead
+// of used as a coordinate.
+//
+// mod(x * 3.0, 1.0) gives an identical picture here. In GLSL the two really
+// are the same thing, because mod is defined as x - y * floor(x / y) and floor
+// rounds DOWN. The difference only bites in languages where % truncates toward
+// zero instead, which makes it negative for negative inputs.
+//
+// WHAT THE SLOPE FIX DOES WITH A CLIFF, which is worth understanding because
+// it is the first place the new plot() meets something it was not designed for.
+//
+// At a tooth, the two samples land either side of the drop, so the "rise"
+// between them is nearly a whole tile height in one pixel. Measured: the slope
+// reaches -118 screen pixels per pixel, so widen is sqrt(1 + 118*118) = 118,
+// and the band becomes 118 times taller. That is enough to cover the entire
+// height of the tile in that one column, which paints a one-pixel VERTICAL
+// line joining the top of one tooth to the bottom of the next. Three teeth,
+// three connectors, and you can count them in the picture.
+//
+// So what does the tile draw? Three separate ramps with a clean gap at each
+// tooth. plot() refuses to draw when the slope is absurd, which is the choice
+// made here: a line plotter would join its samples and paint the vertical, but
+// fract has no value at the jump, so there is nothing there to plot. Both are
+// defensible; this one says out loud that the function is broken there.
+//
+// Flipping it back is deleting one line in plot(). Worth doing once to see the
+// difference — the connected version reads as a sawtooth, the gapped version
+// reads as what the maths actually is.
+//
+// The threshold has its own story, recorded beside the line in plot(): the
+// first guess at it was wrong twice, and measuring rather than reasoning is
+// what caught both. That is the part of this tile most likely to be useful
+// somewhere else.
+vec3 tileFract(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fFract(x), fFract(x + tilePixel.x));
+}
+
 
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
@@ -529,6 +610,7 @@ vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 6) return tileSinePhase(tileUv, tilePixel);
   if (index == 7) return tileSineAmplitude(tileUv, tilePixel);
   if (index == 8) return tileSineFrequency(tileUv, tilePixel);
+  if (index == 9) return tileFract(tileUv, tilePixel);
   return tileTodo(tileUv, tilePixel);
 }
 
@@ -640,9 +722,21 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    footnote into something you can see. Numbers and the fix are in the
 //    tile's comment.
 //
-// 5. FRACT AND MOD.  y = fract(x * 3.0), y = mod(x * 3.0, 1.0)
-//    Sawtooth. The vertical jumps show why fract() tiles and why the seam is
-//    always at the integers.
+// 5. FRACT AND MOD.  [done — tile 09]
+//    y = fract(x * 3.0). Sawtooth: ramp up, fall off a cliff, repeat. The
+//    jumps show why fract() tiles and why the seam always lands on the
+//    integers, which is the same seam scene 01 draws when it uses fract as a
+//    coordinate rather than plotting it.
+//
+//    mod(x * 3.0, 1.0) is identical in GLSL, because mod is x - y*floor(x/y)
+//    and floor rounds down. Only in languages where % truncates toward zero do
+//    the two part company, and then only for negative inputs.
+//
+//    The unplanned lesson: this is the first DISCONTINUOUS function in the
+//    gallery, and it walked straight into the slope correction added for
+//    tile 08. A cliff looks like a slope of -118 pixels per pixel, so the band
+//    widens by 118x and paints a vertical connector at each tooth. Not wrong,
+//    but a decision rather than an accident — details in the tile's comment.
 //
 // 6. ABS AND SIGN.  y = abs(x * 2.0 - 1.0)
 //    The V. Same fold you used in sdBox, one dimension down.
