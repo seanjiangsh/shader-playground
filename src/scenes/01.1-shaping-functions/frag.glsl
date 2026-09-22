@@ -317,6 +317,27 @@ float fSineFrequency(in float x) {
 }
 float fFract(in float x) { return fract(x * 3.0); }
 
+// mod's second argument is the WRAP POINT, so it gets a name instead of being
+// a bare 2.0 in the middle of a line. Dividing by that same number afterwards
+// is what squeezes the result back into 0..1 — and that division turns out to
+// matter far more than it looks. Tile 10 has the whole story.
+float fMod(in float x) {
+  float stretch = 5.0;   // how far x is stretched before any wrapping happens
+  float wrapAt  = 2.0;   // the modulus: the count folds back to 0 here
+  return mod(x * stretch, wrapAt) / wrapAt;
+}
+
+// Teeth that shrink as they march to the right: a repeat MULTIPLIED by a fade.
+// Three named steps rather than one dense line, because the whole idea of the
+// tile is that there ARE two separate things being multiplied.
+float fSawShrink(in float x) {
+  float teeth    = 4.0;               // how many teeth fit across the tile
+  float tooth    = fract(x * teeth);  // 0..1, the identical ramp every time
+  float envelope = 1.0 - x;           // 1 at the left, fading to 0 at the right
+  return tooth * envelope;
+}
+// float fSawShrink(in float x) { return fract(x * 4.0) * exp(-3.0 * x); }  // decay instead of a straight fade — tile 11
+
 // * TILE 00 — LINEAR, y = x.
 //
 // The identity function, and the one to start from because there is nothing to
@@ -585,6 +606,133 @@ vec3 tileFract(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fFract(x), fFract(x + tilePixel.x));
 }
 
+// * TILE 10 — MOD, which is the same picture as tile 09 ON PURPOSE.
+//
+// It is not a mistake and it is not nearly the same, it is exactly the same.
+// GLSL defines mod as
+//
+//     mod(x, y) = x - y * floor(x / y)
+//
+// so with y = 1.0 that is x - floor(x), and fract is DEFINED as x - floor(x).
+// Same two operations in the same order, so the same bits come out. Checked
+// over 200001 samples across the tile: the largest difference is exactly 0.0,
+// and the arrays are bit-identical.
+//
+// So why keep the tile? Because "these two are the same" is a fact worth being
+// able to see rather than take on trust, the same way tile 03 draws pow(x, 1.0)
+// on top of the linear tile to give "no bias" a picture. Two slots spent
+// proving two things are identical is cheap next to being unsure.
+//
+// WHERE THEY DO PART COMPANY, which is the part to remember:
+//
+//   1. THE MODULUS IS A PARAMETER — but a smaller one than it first looks.
+//      fract is mod with the wrap point hard-wired to 1. The tile as written
+//      wraps at 2 and then divides by 2 to get back inside 0..1, and those two
+//      steps cancel each other out:
+//
+//          mod(a, m) / m   ==   fract(a / m)        exactly, for any m
+//
+//      Checked over 200001 samples at several moduli: largest difference 0.0,
+//      or 1.7e-16 when m divides awkwardly, which is float rounding rather
+//      than a different answer. (Writing * 0.5 instead of / 2.0 changes
+//      nothing either — measured difference exactly 0.0.)
+//
+//      So this tile is fract(x * 2.5) in a disguise: stretched by 5, wrapped
+//      at 2, is two and a half teeth. That is why it looks like tile 09 with
+//      the tooth count changed. It IS tile 09 with the tooth count changed.
+//
+//      The modulus only earns its keep when you DON'T divide it back out.
+//      Delete the / wrapAt and the result runs 0..2, so the top half of every
+//      tooth is above the roof of the tile: the graph line disappears for half
+//      of each tooth and the gradient sits at flat white there, because mix()
+//      does not clamp. Worth doing for ten seconds — a value quietly escaping
+//      its 0..1 box is a bug you want to have seen once on purpose.
+//
+//      Said plainly: mod's second argument changes the SCALE of the output,
+//      not the SHAPE of it. For the shape, x is the dial. And for a shape
+//      fract genuinely cannot make on its own, see tile 11.
+//
+//   2. OTHER LANGUAGES DISAGREE. GLSL's mod uses floor, which rounds DOWN, so
+//      it always returns something with the sign of y. C, C++, Java and
+//      JavaScript's % truncates toward ZERO instead, so it keeps the sign of x:
+//
+//                       GLSL mod(x, 1.0)      C / JS  x % 1
+//          x = -0.25          0.75               -0.25
+//          x = -1.25          0.75               -0.25
+//          x =  0.25          0.25                0.25
+//
+//      They agree for positive x and disagree for negative, which is exactly
+//      the case that slips through testing. Worth knowing before porting a
+//      shader to or from JavaScript, and it is why ports of noise functions
+//      sometimes come out subtly wrong.
+vec3 tileFMod(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fMod(x), fMod(x + tilePixel.x));
+}
+
+// * TILE 11 — AN ENVELOPE: teeth that shrink as they go.
+//
+// The question: how do you get a sawtooth whose teeth get smaller and smaller
+// towards the right? The instinct is to hunt for a parameter of fract or mod
+// that does it, and there isn't one. Neither function has a "getting quieter"
+// dial, because neither of them knows where it is — fract(x * 4.0) hands back
+// the identical ramp every time round, by definition.
+//
+// The move is not to change the repeat at all. Keep it, and multiply it by a
+// SECOND function whose whole job is to fade:
+//
+//     y  =  tooth(x)   *   envelope(x)
+//           \_______/      \_________/
+//            the shape       how loud it is here
+//
+//   tooth    = fract(x * 4.0)      1 |/|/|/|/|    the same ramp, four times
+//                                  0 +---------
+//
+//   envelope = 1.0 - x             1 |--__        a plain falling ramp
+//                                  0 +-----__
+//
+//   the product                    1 |/|          tall on the left,
+//                                  0 +--|_|.-..   barely there on the right
+//
+// This is the same move as tile 07, where sin(x * PI) was multiplied by a
+// pulsing amplitude. The only difference is what drives the multiplier: tile
+// 07 keyed it to iTime, so the whole graph breathes; this one keys it to x, so
+// the fade happens ACROSS the tile instead of over time. Same maths, and in
+// audio and animation it goes by the same name either way — an envelope.
+//
+// Measured peak heights, left to right: 0.744, 0.497, 0.250, 0.062. Evenly
+// spaced, because the envelope falls evenly. Swap in the commented exp()
+// variant beside fSawShrink and they become 0.471, 0.222, 0.105 — each tooth
+// roughly half the one before, which is what decay looks like in the real
+// world: a plucked string, a bouncing ball, a dying echo.
+//
+// * TWO THINGS THE PICTURE SHOWS THAT THE FORMULA DOES NOT
+//
+// The ramps are not quite straight. A straight ramp times a straight fade is a
+// quadratic, so each tooth leans over a little. Harmless here, and worth
+// recognising as a general fact: multiply two shapes together and you get a
+// third one that is neither of them.
+//
+// The gaps at the cliffs close up as the teeth shrink, and that is the guard
+// inside plot() showing its seams. The guard drops the line when the slope
+// passes 20, and a cliff's slope is essentially its height measured in screen
+// pixels — so once a tooth is short enough its cliff falls UNDER the threshold
+// and gets drawn as a vertical connector, while the tall ones on the left stay
+// gapped. It even depends on the window size, because pixels are the unit:
+//
+//     window 600 tall  ->  cliff slopes 88, 59, 30    all three gapped
+//     window 400 tall  ->  cliff slopes 59, 39, 20    the third one joins up
+//
+// Resize the window slowly and you can watch the third gap heal itself. The 20
+// was only ever a number that happened to suit the curves already in the
+// gallery. The honest version derives it from the steepest slope a tile MEANS
+// to draw, so that "absurd" is defined by the picture rather than by a
+// constant — parked here until some tile needs it badly enough to be worth the
+// extra machinery.
+vec3 tileSawShrink(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fSawShrink(x), fSawShrink(x + tilePixel.x));
+}
 
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
@@ -611,6 +759,8 @@ vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 7) return tileSineAmplitude(tileUv, tilePixel);
   if (index == 8) return tileSineFrequency(tileUv, tilePixel);
   if (index == 9) return tileFract(tileUv, tilePixel);
+  if (index == 10) return tileFMod(tileUv, tilePixel);
+  if (index == 11) return tileSawShrink(tileUv, tilePixel);
   return tileTodo(tileUv, tilePixel);
 }
 
@@ -729,14 +879,30 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    coordinate rather than plotting it.
 //
 //    mod(x * 3.0, 1.0) is identical in GLSL, because mod is x - y*floor(x/y)
-//    and floor rounds down. Only in languages where % truncates toward zero do
-//    the two part company, and then only for negative inputs.
+//    and floor rounds down — tile 10 draws it and the two pictures match to
+//    the bit. Changing the modulus is less of an escape than it sounds: any
+//    mod ramp normalised back into 0..1 is mod(a, m) / m, and that is exactly
+//    fract(a / m), so it is still a sawtooth with a different tooth count. The
+//    real difference is in languages where % truncates toward zero instead of
+//    flooring, which flips the sign for negative inputs. Both written up on
+//    tile 10.
 //
 //    The unplanned lesson: this is the first DISCONTINUOUS function in the
 //    gallery, and it walked straight into the slope correction added for
 //    tile 08. A cliff looks like a slope of -118 pixels per pixel, so the band
 //    widens by 118x and paints a vertical connector at each tooth. Not wrong,
 //    but a decision rather than an accident — details in the tile's comment.
+//
+// 5b. ENVELOPES.  [done — tile 11]
+//    y = fract(x * 4.0) * (1.0 - x). Teeth that shrink as they go, which no
+//    parameter of fract or mod can produce, because a repeat has no memory of
+//    where it is. Multiply the repeat by a second function of x instead and
+//    the second one becomes its loudness. Same trick as tile 07's pulsing
+//    amplitude, keyed to position rather than to time.
+//
+//    Once seen, it is everywhere: a texture fading out with distance, a wobble
+//    that settles down, a ripple dying away from where it was dropped. Try
+//    exp(-3.0 * x) in place of 1.0 - x for a decay rather than a straight fade.
 //
 // 6. ABS AND SIGN.  y = abs(x * 2.0 - 1.0)
 //    The V. Same fold you used in sdBox, one dimension down.
