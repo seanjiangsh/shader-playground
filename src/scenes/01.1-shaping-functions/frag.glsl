@@ -338,6 +338,11 @@ float fSawShrink(in float x) {
 }
 // float fSawShrink(in float x) { return fract(x * 4.0) * exp(-3.0 * x); }  // decay instead of a straight fade — tile 11
 
+float fAbs(in float x)      { return abs(x * 2.0 - 1.0); }   // the V — tile 12
+float fTent(in float x)     { return 1.0 - fAbs(x); }        // the V upside down — tile 13
+float fAbsShift(in float x) { return abs(x * 2.0 - 0.6); }   // the crease moved left — tile 14
+// float fAbsShift(in float x) { return abs(x - 0.3) / 0.7; }  // the same crease, kept inside 0..1 — tile 14
+
 // * TILE 00 — LINEAR, y = x.
 //
 // The identity function, and the one to start from because there is nothing to
@@ -734,6 +739,129 @@ vec3 tileSawShrink(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fSawShrink(x), fSawShrink(x + tilePixel.x));
 }
 
+// * TILE 12 — ABS, the fold.
+//
+// abs() throws the minus sign away, and that is all it does. On its own that
+// sounds too small to be interesting. The trick is to make half the numbers
+// negative FIRST, so there is something to throw away:
+//
+//     x               0 ........ 0.5 ........ 1
+//     x * 2.0         0 ........  1  ........ 2     stretch to twice the width
+//           - 1.0    -1 ........  0  ........ 1     slide so the middle is 0
+//     abs(...)        1 ........  0  ........ 1     fold the left half up
+//
+// Picture the graph of x * 2.0 - 1.0 as a straight diagonal that dips below
+// the floor on the left. abs() takes the part under the floor and flips it
+// up, like folding a sheet of paper along the line y = 0:
+//
+//     before abs                        after abs
+//
+//     1 |          /                    1 |\         /
+//       |        /                        |  \     /
+//     0 |------/------                  0 |----\ /----
+//       |    /                                 ^ the crease, at x = 0.5
+//    -1 |  /
+//
+// The gradient says it too: white at both edges, black down the middle, and
+// symmetric, because the two halves are now mirror copies of each other.
+//
+// * YOU HAVE ALREADY USED THIS
+//
+// sdBox in scene 02 starts with abs(pos). Same fold, one dimension up: it
+// folds the plane along both axes so the box only has to be worked out for
+// one quarter, and the other three quarters are mirror images for free. A
+// box is four identical corners, and abs is how you get four for the price
+// of one.
+//
+// * THE CREASE
+//
+// The bottom of the V is a sharp point, not a curve. The slope jumps from
+// -2 straight to +2 with nothing in between. That is the fingerprint of abs,
+// and of min and max too: they make hard creases wherever they switch. It is
+// exactly what smin in scene 02 exists to round off.
+//
+// The line survives the crease without help. In screen pixels the V's slope
+// is only about 1.3 on a 900 x 600 window (2 up for every 1 across, squashed
+// by the tile being wider than it is tall), a long way under the guard of
+// 20, so plot() draws both arms and the join normally.
+//
+// Tiles 13 and 14 are two small variations on this one: flip it over, and
+// move the crease.
+vec3 tileAbs(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fAbs(x), fAbs(x + tilePixel.x));
+}
+
+// * TILE 13 — THE TENT, which is the V turned upside down.
+//
+// 1.0 - y is the flip you have met before: 0 becomes 1, 1 becomes 0, and
+// everything between swaps ends. Do it to the V and the crease that was at
+// the bottom is now a peak at the top:
+//
+//     fAbs  (tile 12)          fTent = 1.0 - fAbs
+//
+//     1 |\        /            1 |      /\       <- peak
+//       |  \    /                |    /    \     (the old crease)
+//     0 |____\/____            0 |__/________\__
+//
+// Notice fTent is written as 1.0 - fAbs(x), not by typing the formula out
+// again. That is the same "one named function, no copies to drift" rule as
+// the reason these functions exist at all: fix fAbs and the tent follows.
+//
+// The gradient flips too, black at both edges and white down the middle. A
+// tent like this is the everyday way to say "strongest at the centre, fading
+// evenly to nothing at both sides", and you will meet it again as a falloff.
+//
+// ONE THING THE PICTURE SHOWS: the tips of both the V and the tent land
+// exactly on the edge of the tile, at y = 0 and y = 1. The line is centred
+// on the curve, so half its width at the tip sits outside the tile and gets
+// cut off, and the border paints over what is left. The maths is fine, the
+// point is just drawn on the frame. Scale by 0.9 and add 0.05 if you ever
+// want the tips to sit clear of the edges.
+vec3 tileTent(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fTent(x), fTent(x + tilePixel.x));
+}
+
+// * TILE 14 — MOVING THE CREASE, and a value escaping its box.
+//
+// The crease is always where the inside of the abs() is zero, because that
+// is the one place where there is no sign to throw away. So to move it, solve
+// "inside = 0" for x:
+//
+//     x * 2.0 - 1.0 = 0    ->   x = 0.5     tile 12, crease in the middle
+//     x * 2.0 - 0.6 = 0    ->   x = 0.3     this tile, crease left of centre
+//
+// The catch is the right arm. It still climbs at the same steepness, 2 up for
+// every 1 across, but it now starts from x = 0.3 instead of 0.5, so it has
+// further to go. It reaches 1.0 at x = 0.8 and carries on to 1.4 by the right
+// edge. From x = 0.8 on, the value is above the roof of the tile:
+//
+//     y 1.4 |                    .    <- where the arm really ends
+//       1.0 +----------------/--------  the roof of the tile
+//           |\            /   |
+//           |  \        /     |   no line past here, flat white
+//         0 |____\____/_______|__
+//           0    0.3        0.8   1
+//
+// Measured: the line is drawn in 145 of the 180 columns, and the last fifth
+// of the tile is flat white, because mix() does not stop at 1 and the screen
+// clamps whatever comes out. Same lesson as sin before it was remapped, and
+// as the un-divided mod on tile 10: every time you move or stretch a
+// function, check that its answer still fits 0..1.
+//
+// The fix is to scale by the LONGER arm, so both ends land at 1 or below:
+//
+//     abs(x - 0.3) / 0.7        0.7 = the distance from the crease to x = 1
+//
+// That is the commented alternative beside fAbsShift. Swap it in and the
+// right arm lands exactly on 1.0 at the right edge, while the left arm, being
+// shorter, only reaches 0.3 / 0.7 = 0.43 on the left.
+vec3 tileAbsShift(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fAbsShift(x), fAbsShift(x + tilePixel.x));
+}
+
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
 vec3 tileTodo(in vec2 tileUv, in vec2 tilePixel) {
@@ -761,6 +889,9 @@ vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 9) return tileFract(tileUv, tilePixel);
   if (index == 10) return tileFMod(tileUv, tilePixel);
   if (index == 11) return tileSawShrink(tileUv, tilePixel);
+  if (index == 12) return tileAbs(tileUv, tilePixel);
+  if (index == 13) return tileTent(tileUv, tilePixel);
+  if (index == 14) return tileAbsShift(tileUv, tilePixel);
   return tileTodo(tileUv, tilePixel);
 }
 
@@ -904,8 +1035,16 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    that settles down, a ripple dying away from where it was dropped. Try
 //    exp(-3.0 * x) in place of 1.0 - x for a decay rather than a straight fade.
 //
-// 6. ABS AND SIGN.  y = abs(x * 2.0 - 1.0)
-//    The V. Same fold you used in sdBox, one dimension down.
+// 6. ABS AND SIGN.  [done — tile 12]  y = abs(x * 2.0 - 1.0)
+//    The V. Same fold you used in sdBox, one dimension down. Stretch, slide
+//    so the middle is zero, then abs folds the negative half up. The sharp
+//    crease at the bottom is the thing to remember: abs, min and max all
+//    leave one, and smin is how you round it off.
+//
+//    Tiles 13 and 14 are its two variations. 1.0 - fAbs(x) flips it into a
+//    tent, the everyday "strongest in the middle" falloff. Changing the
+//    - 1.0 moves the crease to wherever the inside of abs() is zero, and
+//    shows once more that a moved function can climb out of 0..1.
 //
 // 7. MIN, MAX, MIXING TWO CURVES.  y = min(x, 1.0 - x), y = mix(a, b, x)
 //    Where the union and intersection of scene 02 come from, seen as graphs.
