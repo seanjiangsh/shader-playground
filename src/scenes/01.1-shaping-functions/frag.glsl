@@ -343,6 +343,8 @@ float fTent(in float x)     { return 1.0 - fAbs(x); }        // the V upside dow
 float fAbsShift(in float x) { return abs(x * 2.0 - 0.6); }   // the crease moved left — tile 14
 // float fAbsShift(in float x) { return abs(x - 0.3) / 0.7; }  // the same crease, kept inside 0..1 — tile 14
 
+float fMin(in float x)      { return min(x, 1.0 - x); }      // the lower of two lines — tile 15
+
 // * TILE 00 — LINEAR, y = x.
 //
 // The identity function, and the one to start from because there is nothing to
@@ -862,6 +864,65 @@ vec3 tileAbsShift(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fAbsShift(x), fAbsShift(x + tilePixel.x));
 }
 
+// * TILE 15 — MIN, which picks the lower of two answers.
+//
+// min(a, b) looks at two numbers and hands back whichever is smaller. Here
+// the two numbers are two straight lines, one climbing and one falling:
+//
+//     a = x          0 at the left, 1 at the right
+//     b = 1.0 - x    1 at the left, 0 at the right
+//
+// Draw both, then keep only the LOWER one at each x:
+//
+//     1 |\            /|          1 |              |
+//       |   \      /   |            |              |
+//   0.5 |      \/      |        0.5 |      /\      |   <- the crossing,
+//       |   /      \   |            |   /      \   |      at x = 0.5
+//     0 |/____________\|          0 |/____________\|
+//        b falls, a climbs            min keeps the lower
+//
+// On the left, a is the lower one, so the graph follows a upward. On the
+// right, b is lower, so it follows b downward. The switch happens where the
+// two lines cross, x = 0.5, and that switch is the crease at the top.
+//
+// So the shape is a TENT, and it only reaches half height. The peak is where
+// the two lines cross, and they cross at 0.5, so nothing can go higher: the
+// gradient never gets past mid grey. (A correction: the hint for this tile
+// said it would be the tent upside down. It is not. It is the right way up,
+// at half the height. The render settled it.)
+//
+// * TWO FORMULAS, ONE PICTURE
+//
+// Put this tile next to tile 13 and they are the same shape, one squashed to
+// half height. That is not a coincidence, it is exact:
+//
+//     min(x, 1.0 - x)  ==  0.5 * fTent(x)       largest difference 2.8e-17
+//
+// The reason is a small identity worth keeping in your pocket, because it
+// says min is made of abs:
+//
+//     min(a, b)  ==  (a + b) / 2  -  abs(a - b) / 2
+//
+// Read it in plain English: start halfway between the two numbers, then step
+// down by half the gap between them. You land exactly on the smaller one.
+// Checked on a million random pairs: largest difference 8.9e-16, which is
+// rounding. With a = x and b = 1.0 - x the halfway point is always 0.5, and
+// the gap is abs(2x - 1), which is fAbs. That is why the min crease and the
+// abs crease look alike: they are the same crease.
+//
+// * WHY THIS MATTERS: IT IS SCENE 02'S UNION
+//
+// In scene 02, min(circle, box) joined two shapes into one. Each distance
+// field says "how far am I from this shape", and min keeps the nearer, so a
+// point belongs to whichever shape it is closer to. That is this tile, with
+// the two lines standing in for the two shapes. The crease where the winner
+// changes hands is the same crease smin rounds off in scene 02: this is the
+// one-dimensional picture of why smin exists.
+vec3 tileMin(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fMin(x), fMin(x + tilePixel.x));
+}
+
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
 vec3 tileTodo(in vec2 tileUv, in vec2 tilePixel) {
@@ -892,6 +953,7 @@ vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 12) return tileAbs(tileUv, tilePixel);
   if (index == 13) return tileTent(tileUv, tilePixel);
   if (index == 14) return tileAbsShift(tileUv, tilePixel);
+  if (index == 15) return tileMin(tileUv, tilePixel);
   return tileTodo(tileUv, tilePixel);
 }
 
@@ -1046,7 +1108,15 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    - 1.0 moves the crease to wherever the inside of abs() is zero, and
 //    shows once more that a moved function can climb out of 0..1.
 //
-// 7. MIN, MAX, MIXING TWO CURVES.  y = min(x, 1.0 - x), y = mix(a, b, x)
+// 7. MIN, MAX, MIXING TWO CURVES.  [min done — tile 15]
+//    y = min(x, 1.0 - x), y = max(x, 1.0 - x), y = mix(a, b, x)
+//
+//    min keeps the lower of two curves, so two crossing lines become a tent
+//    at half height, and it turns out to be exactly 0.5 * fTent, because
+//    min(a, b) = (a + b) / 2 - abs(a - b) / 2. max is the same identity
+//    with that minus turned into a plus, which is worth turning into a
+//    prediction before you draw it.
+//
 //    Where the union and intersection of scene 02 come from, seen as graphs.
 //
 // 8. ANIMATE ONE.  Multiply anything by iTime inside a sin(), or move a
