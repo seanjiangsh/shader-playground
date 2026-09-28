@@ -338,13 +338,14 @@ float fSawShrink(in float x) {
 }
 // float fSawShrink(in float x) { return fract(x * 4.0) * exp(-3.0 * x); }  // decay instead of a straight fade — tile 11
 
-float fAbs(in float x)      { return abs(x * 2.0 - 1.0); }   // the V — tile 12
-float fTent(in float x)     { return 1.0 - fAbs(x); }        // the V upside down — tile 13
-float fAbsShift(in float x) { return abs(x * 2.0 - 0.6); }   // the crease moved left — tile 14
+float fAbs(in float x)       { return abs(x * 2.0 - 1.0); }          // the V — tile 12
+float fTent(in float x)      { return 1.0 - fAbs(x); }               // the V upside down — tile 13
+float fAbsShift(in float x)  { return abs(x * 2.0 - 0.6); }          // the crease moved left — tile 14
 // float fAbsShift(in float x) { return abs(x - 0.3) / 0.7; }  // the same crease, kept inside 0..1 — tile 14
 
-float fMin(in float x)      { return min(x, 1.0 - x); }      // the lower of two lines — tile 15
-float fMax(in float x)      { return max(x, 1.0 - x); }      // the higher of two lines — tile 16
+float fMin(in float x)       { return min(x, 1.0 - x); }             // the lower of two lines — tile 15
+float fMax(in float x)       { return max(x, 1.0 - x); }             // the higher of two lines — tile 16
+float fMinMaxMix(in float x) { return mix(fMin(x), fMax(x), 0.5); }  // halfway between min and max — tile 17
 
 // * TILE 00 — LINEAR, y = x.
 //
@@ -393,6 +394,8 @@ vec3 tileLinear(in vec2 tileUv, in vec2 tilePixel) {
 // sqrt(1 + slope*slope), which at the steepest point is 2 / 1.94 = 1.03 px.
 // So the line looks about half as thick through the middle as it does at the
 // ends. Nothing is broken; the ruler is just pointing the wrong way.
+// (Fixed since: tile 08 made this impossible to ignore, and plot() now
+// measures across the curve, so the line no longer thins through the S.)
 vec3 tileSmoothstep(in vec2 tileUv, in vec2 tilePixel) {
   float x = tileUv.x;
   return drawGraph(tileUv, tilePixel, fSmoothstep(x), fSmoothstep(x + tilePixel.x));
@@ -443,6 +446,14 @@ vec3 tileSmoothstep(in vec2 tileUv, in vec2 tilePixel) {
 // A fade that feels sudden usually wants an exponent above 1; a bar that takes
 // forever to get going usually wants one below 1.
 //
+// Want a fourth? pow(x, 5.0) is one more line in drawTile and no new
+// function, which is the payoff of the exponent being a parameter. The first
+// attempt at this family was a tilePow2() with the exponent written inside,
+// and it went wrong twice: the name said 2 while the body said 0.5, and for a
+// while the exponent was tileUv.y, which quietly stopped it being a function
+// of x at all. Both problems disappear once the part that varies is a
+// parameter with a name.
+//
 // TWO NOTES ON pow() ITSELF, since this is the first tile that really uses it.
 //
 // It has a DOMAIN. In GLSL ES, pow(x, y) is undefined when x is negative, and
@@ -461,13 +472,14 @@ vec3 tileSmoothstep(in vec2 tileUv, in vec2 tilePixel) {
 // WATCH THE LINE WIDTH on the 2.0 tile. It is the steepest curve in the
 // gallery so far, and plot() measures straight up rather than perpendicular to
 // the curve, so the line thins out noticeably at the right-hand end. Same
-// artifact as on smoothstep, more obvious here.
+// artifact as on smoothstep, more obvious here. (Fixed since, in plot(),
+// after tile 08.)
 vec3 tilePow(in vec2 tileUv, in vec2 tilePixel, in float exponent) {
   float x = tileUv.x;
   return drawGraph(tileUv, tilePixel, fPow(x, exponent), fPow(x + tilePixel.x, exponent));
 }
 
-// * TILES 05, 06, 07 — SINE, and the first things in the gallery that MOVE.
+// * TILES 05 TO 08 — SINE, and the first things in the gallery that MOVE.
 //
 // The idea that unlocks all of this: everything inside sin() is an ANGLE in
 // radians, and iTime is SECONDS. So any number multiplying iTime is radians
@@ -475,21 +487,36 @@ vec3 tilePow(in vec2 tileUv, in vec2 tilePixel, in float exponent) {
 // is a cycle every 3.1 seconds. For N cycles per second, use N * TWO_PI.
 //
 // There are exactly three things you can animate in a wave, and they feel
-// completely different. Two are here; the third is exercise 4b.
+// completely different, so each one gets a tile of its own.
 //
 //   PHASE      add to the angle       the wave slides sideways    <- tile 06
 //   AMPLITUDE  multiply the result    the wave grows and shrinks  <- tile 07
-//   FREQUENCY  multiply x             more or fewer humps         <- exercise
+//   FREQUENCY  multiply x             more or fewer humps         <- tile 08
 //
 // Tile 05 is the still reference, and it earns its slot: motion is hard to
 // judge with nothing beside it holding still.
+//
+// A FULL WAVE OR AN ARCH. x * TWO_PI is one whole turn across the tile, so
+// you get a full wave, and it needs sin01 to fit. x * PI is half a turn, and
+// over 0..PI sine never goes negative, so the arch lands in 0..1 with no
+// remapping at all. Reach for the full turn when you want a wave, the arch
+// when you want a single hump. Tile 07 uses the arch.
+//
+// RANGE, the reflex this family teaches. sin swings -1..1 and a tile shows
+// 0..1, so more than half the answer is off-screen unless you remap it. Seen
+// once without the remap: the second half of the wave simply left the tile
+// and the gradient sat at flat black. Not broken, out of frame. Ask "does
+// this still fit 0..1?" of every function whose output is not already there;
+// tiles 10 and 14 both come back to it.
 
 vec3 tileSine(in vec2 tileUv, in vec2 tilePixel) {
   float x = tileUv.x;
   return drawGraph(tileUv, tilePixel, fSine(x), fSine(x + tilePixel.x));
 }
 
-// PHASE. Adding to the angle slides the whole wave along x — add and it
+// * TILE 06 — PHASE, the wave slides sideways.
+//
+// Adding to the angle slides the whole wave along x — add and it
 // travels left, subtract and it travels right. Nothing about the wave's SHAPE
 // changes, which is exactly what makes it read as movement rather than as
 // distortion.
@@ -498,7 +525,9 @@ vec3 tileSinePhase(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fSinePhase(x), fSinePhase(x + tilePixel.x));
 }
 
-// AMPLITUDE. Multiplying the result scales the wave's height.
+// * TILE 07 — AMPLITUDE, the wave grows and shrinks.
+//
+// Multiplying the result scales the wave's height.
 //
 // The base here is the ARCH, sin(x * PI), not the full period the other two
 // use, and that is the right call rather than an inconsistency. The arch
@@ -514,8 +543,9 @@ vec3 tileSineAmplitude(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fSineAmplitude(x), fSineAmplitude(x + tilePixel.x));
 }
 
-// FREQUENCY, the third knob. Multiplying x decides how many humps fit across
-// the tile.
+// * TILE 08 — FREQUENCY, the third knob.
+//
+// Multiplying x decides how many humps fit across the tile.
 //
 // The trap avoided here: sin(tileUv.x * iTime) looks reasonable and is wrong,
 // because iTime grows forever, so the humps get denser without limit until
@@ -553,8 +583,9 @@ vec3 tileSineAmplitude(in vec2 tileUv, in vec2 tilePixel) {
 // On the flat parts the rise per column is nearly zero, the dashes overlap,
 // and the line looks solid. That is why it only breaks up where it is steep.
 // The fix is to measure PERPENDICULAR to the curve rather than vertically,
-// which means the band has to grow by sqrt(1 + slope*slope) — see the note on
-// plot() for the three ways to get that slope.
+// which means growing the band by sqrt(1 + slope*slope). plot() does that
+// now, and this tile is the reason it does: see MEASURING THE WIDTH THE RIGHT
+// WAY, above plot().
 vec3 tileSineFrequency(in vec2 tileUv, in vec2 tilePixel) {
   float x = tileUv.x;
   return drawGraph(tileUv, tilePixel, fSineFrequency(x), fSineFrequency(x + tilePixel.x));
@@ -563,9 +594,9 @@ vec3 tileSineFrequency(in vec2 tileUv, in vec2 tilePixel) {
 // * TILE 09 — FRACT, the sawtooth, and the first BROKEN curve in the gallery.
 //
 // fract() keeps the fractional part and throws the whole number away, so as x
-// climbs it ramps 0 up to 1, drops instantly back to 0, and does it again. The
-// * 3.0 is the tile-count rule from scene 01: x spans 1.0, so multiplying by 3
-// makes it cross three integers, and you get three teeth.
+// climbs it ramps 0 up to 1, drops instantly back to 0, and does it again.
+// Multiplying by 3.0 is the tile-count rule from scene 01: x spans 1.0, so
+// multiplying by 3 makes it cross three integers, and you get three teeth.
 //
 //   y  1 |   /|   /|   /|
 //        |  / |  / |  / |      each tooth ramps up...
@@ -713,6 +744,11 @@ vec3 tileFMod(in vec2 tileUv, in vec2 tilePixel) {
 // variant beside fSawShrink and they become 0.471, 0.222, 0.105 — each tooth
 // roughly half the one before, which is what decay looks like in the real
 // world: a plucked string, a bouncing ball, a dying echo.
+//
+// Once you have seen an envelope, it turns up everywhere: a texture fading
+// out with distance, a wobble that settles down, a ripple dying away from
+// where it was dropped. A repeat on its own has no memory of where it is;
+// the envelope is what gives it one.
 //
 // * TWO THINGS THE PICTURE SHOWS THAT THE FORMULA DOES NOT
 //
@@ -986,6 +1022,64 @@ vec3 tileMax(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fMax(x), fMax(x + tilePixel.x));
 }
 
+// * TILE 17 — MIX, exactly halfway between min and max.
+//
+// min and max SWITCH: at each x they hand back one answer or the other.
+// mix(a, b, t) BLENDS instead. t says how far to walk from a toward b:
+//
+//     t = 0.0   ->  all a
+//     t = 0.5   ->  exactly halfway between them
+//     t = 1.0   ->  all b
+//
+// Written out, it is a + (b - a) * t: start at a, and go t of the way to b.
+//
+// Here a is tile 15's tent, b is tile 16's V, and t is 0.5. What comes out
+// is a dead straight line at 0.5, all the way across, and the gradient is
+// one flat mid grey. That is not a bug, and tile 16 already told you it
+// would happen: min + max is always a + b, and here a + b = x + (1 - x) = 1
+// at every x. So halfway between them, (min + max) / 2, is always 0.5.
+//
+// The picture makes it obvious. The tent and the V are the two halves of the
+// same X, the lines x and 1 - x cut at their crossing:
+//
+//        1 |\            /|   <- max keeps the top half (tile 16)
+//          |   \      /   |
+//      0.5 |======X=======|   <- halfway between them: flat
+//          |   /      \   |
+//        0 |/____________\|   <- min keeps the bottom half (tile 15)
+//
+// At every x, the V is exactly as far above 0.5 as the tent is below it, so
+// the point halfway between them never moves off 0.5. The two creases cancel.
+//
+// The same flat line turned up on tile 08, when the wave had zero humps.
+// Different road, same place: "nothing left to show" draws as a flat line in
+// the middle of the tile, not as an empty tile.
+//
+// * NEXT: MAKE IT MOVE
+//
+// Replace the fixed 0.5 with a t that swings 0..1 and back, the same tool as
+// tile 07:
+//
+//     float t = sin01(iTime * PULSE_SPEED);
+//
+// fSineAmplitude shows one way to use iTime inside a shape function. The
+// tile should then morph through three shapes you already know:
+//
+//     t = 0.0   the tent, tile 15
+//     t = 0.5   the flat line, this tile
+//     t = 1.0   the V, tile 16
+//
+// Worked out, the whole family is 0.5 + (t - 0.5) * fAbs(x), checked to
+// 1.1e-16 at five values of t. So watch the crease: it never goes away. It
+// shrinks to nothing at t = 0.5 and comes back pointing the other way.
+// Mixing two creased shapes gives you another creased shape, because mix
+// blends whole curves, it does not round off a corner. Rounding a corner is
+// what smin in scene 02 is for.
+vec3 tileMinMaxMix(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fMinMaxMix(x), fMinMaxMix(x + tilePixel.x));
+}
+
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
 vec3 tileTodo(in vec2 tileUv, in vec2 tilePixel) {
@@ -1018,6 +1112,7 @@ vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 14) return tileAbsShift(tileUv, tilePixel);
   if (index == 15) return tileMin(tileUv, tilePixel);
   if (index == 16) return tileMax(tileUv, tilePixel);
+  if (index == 17) return tileMinMaxMix(tileUv, tilePixel);
   return tileTodo(tileUv, tilePixel);
 }
 
@@ -1068,124 +1163,27 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 // beside the linear one.
 // ---------------------------------------------------------------------------
 //
-// 0. LINEAR.  [done]  y = x
+// DONE. Everything a tile taught lives in that tile's own comment, so this
+// list only says where to look:
 //
-// 1. SMOOTHSTEP.  y = smoothstep(0.0, 1.0, x)
-//    An S-curve: flat at both ends, steep in the middle. This is the ease you
-//    already used for anti-aliasing, seen as a shape for the first time.
-//    Then try narrowing the edges: smoothstep(0.3, 0.7, x).
+//   0.   LINEAR                    tile 00
+//   1.   SMOOTHSTEP                tile 01
+//   2.   POWER                     tiles 02, 03, 04
+//   4.   SINE                      tiles 05, 06, 07
+//   4b.  SINE, FREQUENCY           tile 08
+//   5.   FRACT AND MOD             tiles 09, 10
+//   5b.  ENVELOPES                 tile 11
+//   6.   ABS                       tiles 12, 13, 14
+//   7.   MIN, MAX, MIX             tiles 15, 16, 17
 //
-// 2. POWER.  [done — tiles 02, 03, 04 at exponents 0.5, 1.0, 2.0]
-//    Bias. Above 1.0 pushes values toward 0 (slow start, fast finish); below
-//    1.0 does the opposite, and pow(x, 0.5) is sqrt(x). The knob to reach for
-//    when something "ramps up too fast" or "hangs around too long".
+// STILL TO DO:
 //
-//    Written as one tilePow() with the exponent as an argument, because this
-//    is one function with a dial rather than three functions. Add pow(x, 5.0)
-//    by adding one dispatch line — no new function needed. The exponent-1.0
-//    tile is deliberately a duplicate of the linear one: "no bias" needs a
-//    picture too, sitting between the two biased ones.
-//
-//    The first attempt at this was a tilePow2() with the exponent hard-coded,
-//    and it went wrong twice in a way worth remembering: the exponent was
-//    tileUv.y rather than a constant, which quietly stopped it being a
-//    function of x at all, and then the name said 2 while the body said 0.5.
-//    Both disappear once the varying part is a parameter with a name.
+// 7b. MAKE THE MIX MOVE. The next step for tile 17, written up at the end of
+//    its comment.
 //
 // 3. STEP AND CLAMP.  y = step(0.5, x), and y = clamp(x * 2.0 - 0.5, 0.0, 1.0)
 //    The hard cut, and the flattened ramp. Worth drawing once so the staircase
 //    edges of step() are a picture rather than a warning.
-//
-// 4. SINE.  [done — tiles 05, 06, 07: still, phase, amplitude]
-//    The 0.5 + 0.5 * pattern you have written many times, finally graphed, and
-//    now pulled out into sin01() because it is the reusable half of the idea.
-//    One full period across the tile, because TWO_PI is one whole turn.
-//
-//    Half a period, sin(x * PI), is worth knowing as its own trick: over the
-//    range 0..PI sine never goes negative, so it lands in 0..1 with no
-//    remapping at all. That is the arch tile 07 pulses. Reach for a full
-//    period when you want a wave, the arch when you want a single hump.
-//
-//    The general lesson is about RANGE. sin swings -1..1 and a tile shows
-//    0..1, so more than half the answer is off-screen unless you remap it.
-//    Seen once without the remap: the second half of the wave simply left the
-//    tile and the gradient clamped to flat black. Not broken, out of frame —
-//    a reflex worth building for every function whose output is not already
-//    0..1.
-//
-// 4b. SINE, THE THIRD KNOB: FREQUENCY.  [done — tile 08]
-//    float humps = mix(0.0, 2.0, sin01(iTime));
-//    y = sin01(x * TWO_PI * humps)
-//
-//    The trap is that sin(x * iTime) looks reasonable and is wrong: iTime grows
-//    forever, so the humps get denser without limit until the tile is a grey
-//    blur. mix() between two fixed values keeps it bounded. Worth writing the
-//    broken version once and watching it for ten seconds.
-//
-//    Two things this tile taught that were not about frequency at all. Zero
-//    humps is a flat line at 0.5, not a bug — "no wave" is a wave with nothing
-//    left in it. And it is the first tile steep enough to break the graph line
-//    into dashes, which turned plot()'s vertical-measurement note from a
-//    footnote into something you can see. Numbers and the fix are in the
-//    tile's comment.
-//
-// 5. FRACT AND MOD.  [done — tile 09]
-//    y = fract(x * 3.0). Sawtooth: ramp up, fall off a cliff, repeat. The
-//    jumps show why fract() tiles and why the seam always lands on the
-//    integers, which is the same seam scene 01 draws when it uses fract as a
-//    coordinate rather than plotting it.
-//
-//    mod(x * 3.0, 1.0) is identical in GLSL, because mod is x - y*floor(x/y)
-//    and floor rounds down — tile 10 draws it and the two pictures match to
-//    the bit. Changing the modulus is less of an escape than it sounds: any
-//    mod ramp normalised back into 0..1 is mod(a, m) / m, and that is exactly
-//    fract(a / m), so it is still a sawtooth with a different tooth count. The
-//    real difference is in languages where % truncates toward zero instead of
-//    flooring, which flips the sign for negative inputs. Both written up on
-//    tile 10.
-//
-//    The unplanned lesson: this is the first DISCONTINUOUS function in the
-//    gallery, and it walked straight into the slope correction added for
-//    tile 08. A cliff looks like a slope of -118 pixels per pixel, so the band
-//    widens by 118x and paints a vertical connector at each tooth. Not wrong,
-//    but a decision rather than an accident — details in the tile's comment.
-//
-// 5b. ENVELOPES.  [done — tile 11]
-//    y = fract(x * 4.0) * (1.0 - x). Teeth that shrink as they go, which no
-//    parameter of fract or mod can produce, because a repeat has no memory of
-//    where it is. Multiply the repeat by a second function of x instead and
-//    the second one becomes its loudness. Same trick as tile 07's pulsing
-//    amplitude, keyed to position rather than to time.
-//
-//    Once seen, it is everywhere: a texture fading out with distance, a wobble
-//    that settles down, a ripple dying away from where it was dropped. Try
-//    exp(-3.0 * x) in place of 1.0 - x for a decay rather than a straight fade.
-//
-// 6. ABS AND SIGN.  [done — tile 12]  y = abs(x * 2.0 - 1.0)
-//    The V. Same fold you used in sdBox, one dimension down. Stretch, slide
-//    so the middle is zero, then abs folds the negative half up. The sharp
-//    crease at the bottom is the thing to remember: abs, min and max all
-//    leave one, and smin is how you round it off.
-//
-//    Tiles 13 and 14 are its two variations. 1.0 - fAbs(x) flips it into a
-//    tent, the everyday "strongest in the middle" falloff. Changing the
-//    - 1.0 moves the crease to wherever the inside of abs() is zero, and
-//    shows once more that a moved function can climb out of 0..1.
-//
-// 7. MIN, MAX, MIXING TWO CURVES.  [min and max done — tiles 15, 16]
-//    y = min(x, 1.0 - x), y = max(x, 1.0 - x), y = mix(a, b, x)
-//
-//    min keeps the lower of two curves, so two crossing lines become a tent
-//    at half height, and it turns out to be exactly 0.5 * fTent, because
-//    min(a, b) = (a + b) / 2 - abs(a - b) / 2. max is the same identity
-//    with that minus turned into a plus, so it is a V in the top half:
-//    0.5 + 0.5 * fAbs. And min + max always equals a + b, so the two tiles
-//    fit into each other exactly.
-//
-//    Still to do: mix(a, b, x) between two curves, which BLENDS where min
-//    and max SWITCH, so there is no crease.
-//
-//    Where the union and intersection of scene 02 come from, seen as graphs.
 //
 // 8. ANIMATE ONE.  Multiply anything by iTime inside a sin(), or move a
 //    smoothstep's edges with it, and watch the curve breathe. The graph is the
