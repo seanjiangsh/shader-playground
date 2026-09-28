@@ -344,6 +344,7 @@ float fAbsShift(in float x) { return abs(x * 2.0 - 0.6); }   // the crease moved
 // float fAbsShift(in float x) { return abs(x - 0.3) / 0.7; }  // the same crease, kept inside 0..1 — tile 14
 
 float fMin(in float x)      { return min(x, 1.0 - x); }      // the lower of two lines — tile 15
+float fMax(in float x)      { return max(x, 1.0 - x); }      // the higher of two lines — tile 16
 
 // * TILE 00 — LINEAR, y = x.
 //
@@ -923,6 +924,68 @@ vec3 tileMin(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fMin(x), fMin(x + tilePixel.x));
 }
 
+// * TILE 16 — MAX, the other half of the pair.
+//
+// Same two lines as tile 15, a = x climbing and b = 1.0 - x falling. This
+// time keep the HIGHER one at each x:
+//
+//     1 |\            /|          1 |\            /|
+//       |   \      /   |            |   \      /   |
+//   0.5 |      \/      |        0.5 |      \/      |   <- the crossing,
+//       |   /      \   |            |              |      now the lowest
+//     0 |/____________\|          0 |______________|      point
+//        b falls, a climbs            max keeps the higher
+//
+// On the left, b is the higher one, so the graph follows b downward. On the
+// right, a is higher, so it follows a upward. So the shape is a V, and it
+// never goes below 0.5, because the lowest max can be is where the two lines
+// meet. The gradient shows it: nothing darker than mid grey anywhere.
+//
+// Same identity as tile 15, with the minus turned into a plus:
+//
+//     max(a, b)  ==  (a + b) / 2  +  abs(a - b) / 2
+//
+// Start halfway between the two numbers, then step UP by half the gap, and
+// you land on the bigger one. With these two lines that gives
+//
+//     max(x, 1.0 - x)  ==  0.5 + 0.5 * fAbs(x)      largest difference 1.1e-16
+//
+// which is tile 12's V, squashed to half height and lifted into the top
+// half of the tile.
+//
+// * MIN AND MAX TOGETHER
+//
+// Put tiles 15 and 16 side by side and they fit into each other like two
+// halves of a mould: one is exactly the room the other leaves. That is also
+// exact, and for any two numbers, not just these:
+//
+//     min(a, b) + max(a, b)  ==  a + b
+//
+// Between them, min and max just share out a and b: one takes the smaller,
+// the other the bigger, and nothing is lost. Here a + b = 1 at every x, so
+// fMin(x) + fMax(x) is exactly 1 all the way across.
+//
+// In scene 02, max was INTERSECTION: max(circle, box) keeps the FARTHER of
+// the two distances, so a point only counts as inside when it is inside
+// both shapes. Union and intersection are these two tiles, one dimension up.
+//
+// * THE BUG THIS TILE HAD, worth remembering
+//
+// The first version sampled the second point as fMax(tilePixel.x) instead of
+// fMax(x + tilePixel.x). Without the x, it asked for the value one pixel from
+// the tile's LEFT EDGE, the same fixed spot for every pixel, so yNext was
+// about 0.994 everywhere. plot() then read a made-up slope as steep as 59:
+// the guard hid the line in 118 of the 180 columns, and the columns near the
+// edges got smeared green wedges instead.
+//
+// The clue for next time: the gradient still looked right, because it only
+// uses y. When the colours are right and the line is wrong, check the
+// second f(...) call first.
+vec3 tileMax(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fMax(x), fMax(x + tilePixel.x));
+}
+
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
 vec3 tileTodo(in vec2 tileUv, in vec2 tilePixel) {
@@ -954,6 +1017,7 @@ vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 13) return tileTent(tileUv, tilePixel);
   if (index == 14) return tileAbsShift(tileUv, tilePixel);
   if (index == 15) return tileMin(tileUv, tilePixel);
+  if (index == 16) return tileMax(tileUv, tilePixel);
   return tileTodo(tileUv, tilePixel);
 }
 
@@ -1108,14 +1172,18 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //    - 1.0 moves the crease to wherever the inside of abs() is zero, and
 //    shows once more that a moved function can climb out of 0..1.
 //
-// 7. MIN, MAX, MIXING TWO CURVES.  [min done — tile 15]
+// 7. MIN, MAX, MIXING TWO CURVES.  [min and max done — tiles 15, 16]
 //    y = min(x, 1.0 - x), y = max(x, 1.0 - x), y = mix(a, b, x)
 //
 //    min keeps the lower of two curves, so two crossing lines become a tent
 //    at half height, and it turns out to be exactly 0.5 * fTent, because
 //    min(a, b) = (a + b) / 2 - abs(a - b) / 2. max is the same identity
-//    with that minus turned into a plus, which is worth turning into a
-//    prediction before you draw it.
+//    with that minus turned into a plus, so it is a V in the top half:
+//    0.5 + 0.5 * fAbs. And min + max always equals a + b, so the two tiles
+//    fit into each other exactly.
+//
+//    Still to do: mix(a, b, x) between two curves, which BLENDS where min
+//    and max SWITCH, so there is no crease.
 //
 //    Where the union and intersection of scene 02 come from, seen as graphs.
 //
