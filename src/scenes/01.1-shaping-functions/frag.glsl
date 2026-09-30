@@ -338,14 +338,14 @@ float fSawShrink(in float x) {
 }
 // float fSawShrink(in float x) { return fract(x * 4.0) * exp(-3.0 * x); }  // decay instead of a straight fade — tile 11
 
-float fAbs(in float x)       { return abs(x * 2.0 - 1.0); }          // the V — tile 12
-float fTent(in float x)      { return 1.0 - fAbs(x); }               // the V upside down — tile 13
-float fAbsShift(in float x)  { return abs(x * 2.0 - 0.6); }          // the crease moved left — tile 14
+float fAbs(in float x)                   { return abs(x * 2.0 - 1.0); }        // the V — tile 12
+float fTent(in float x)                  { return 1.0 - fAbs(x); }             // the V upside down — tile 13
+float fAbsShift(in float x)              { return abs(x * 2.0 - 0.6); }        // the crease moved left — tile 14
 // float fAbsShift(in float x) { return abs(x - 0.3) / 0.7; }  // the same crease, kept inside 0..1 — tile 14
 
-float fMin(in float x)       { return min(x, 1.0 - x); }             // the lower of two lines — tile 15
-float fMax(in float x)       { return max(x, 1.0 - x); }             // the higher of two lines — tile 16
-float fMinMaxMix(in float x) { return mix(fMin(x), fMax(x), 0.5); }  // halfway between min and max — tile 17
+float fMin(in float x)                   { return min(x, 1.0 - x); }           // the lower of two lines — tile 15
+float fMax(in float x)                   { return max(x, 1.0 - x); }           // the higher of two lines — tile 16
+float fMinMaxMix(in float x, in float t) { return mix(fMin(x), fMax(x), t); }  // tent at t = 0, V at t = 1 — tiles 17, 18
 
 // * TILE 00 — LINEAR, y = x.
 //
@@ -1055,29 +1055,67 @@ vec3 tileMax(in vec2 tileUv, in vec2 tilePixel) {
 // Different road, same place: "nothing left to show" draws as a flat line in
 // the middle of the tile, not as an empty tile.
 //
-// * NEXT: MAKE IT MOVE
+// * WHY t IS A PARAMETER
 //
-// Replace the fixed 0.5 with a t that swings 0..1 and back, the same tool as
-// tile 07:
+// fMinMaxMix takes the blend amount t as its second input instead of having
+// 0.5 written inside it, the same move tilePow made with its exponent. That
+// makes this tile just one setting of a dial: fMinMaxMix(x, 0.5). Tile 18
+// uses the very same function and only changes where t comes from.
+vec3 tileMinMaxMix(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  float t = 0.5;   // fixed exactly halfway: tile 18 lets it move
+  return drawGraph(tileUv, tilePixel, fMinMaxMix(x, t), fMinMaxMix(x + tilePixel.x, t));
+}
+
+// * TILE 18 — MORPH, the mix set moving.
+//
+// Tile 17 with the fixed 0.5 replaced by a t that swings 0..1 and back:
 //
 //     float t = sin01(iTime * PULSE_SPEED);
 //
-// fSineAmplitude shows one way to use iTime inside a shape function. The
-// tile should then morph through three shapes you already know:
+// Same tool as tile 07's pulse, and the same speed, so put the two tiles
+// side by side and they breathe in step. As t sweeps, the tile morphs
+// through three shapes you have already met:
 //
-//     t = 0.0   the tent, tile 15
-//     t = 0.5   the flat line, this tile
-//     t = 1.0   the V, tile 16
+//     t = 0.0   the tent        (tile 15)
+//     t = 0.5   the flat line   (tile 17)
+//     t = 1.0   the V           (tile 16)
 //
-// Worked out, the whole family is 0.5 + (t - 0.5) * fAbs(x), checked to
-// 1.1e-16 at five values of t. So watch the crease: it never goes away. It
-// shrinks to nothing at t = 0.5 and comes back pointing the other way.
-// Mixing two creased shapes gives you another creased shape, because mix
-// blends whole curves, it does not round off a corner. Rounding a corner is
-// what smin in scene 02 is for.
-vec3 tileMinMaxMix(in vec2 tileUv, in vec2 tilePixel) {
+// A NAME CHANGE: this was first called tileMinMaxMixFrequency. Frequency is
+// the knob that multiplies x and changes how many humps fit (tile 08).
+// Nothing here changes the count; what moves is how far the blend has gone,
+// so "morph" says what you see.
+//
+// * THE CREASE NEVER GOES AWAY
+//
+// Worked out, the whole family is one formula:
+//
+//     mix(fMin(x), fMax(x), t)  ==  0.5 + (t - 0.5) * fAbs(x)
+//
+// checked to 1.1e-16 at five values of t. Read it as "the V from tile 12,
+// scaled by (t - 0.5), sitting on a line at 0.5":
+//
+//     t = 0.0    0.5 - 0.5 * fAbs     the V flipped and squashed: a tent
+//     t = 0.25   0.5 - 0.25 * fAbs    a flatter tent
+//     t = 0.5    0.5 +   0 * fAbs     no V left at all: the flat line
+//     t = 0.75   0.5 + 0.25 * fAbs    a shallow V
+//     t = 1.0    0.5 + 0.5 * fAbs     the full V
+//
+// So the crease is there the whole time. It shrinks to nothing at t = 0.5,
+// flips over, and grows back pointing the other way. Mixing two creased
+// shapes gives you another creased shape, because mix blends whole curves,
+// it does not round off a corner. Rounding a corner is what smin in scene
+// 02 is for.
+//
+// It also answers the question tile 07 raised: multiplying by a changing
+// number is amplitude. Here that multiplier, (t - 0.5), goes NEGATIVE for
+// half the cycle, and a negative amplitude flips the shape upside down. On
+// tile 07 sin01 kept the multiplier in 0..1 for exactly that reason; here
+// the flip is the whole point.
+vec3 tileMinMaxMorph(in vec2 tileUv, in vec2 tilePixel) {
   float x = tileUv.x;
-  return drawGraph(tileUv, tilePixel, fMinMaxMix(x), fMinMaxMix(x + tilePixel.x));
+  float t = sin01(iTime * PULSE_SPEED);   // 0 = tent, 0.5 = flat, 1 = V
+  return drawGraph(tileUv, tilePixel, fMinMaxMix(x, t), fMinMaxMix(x + tilePixel.x, t));
 }
 
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
@@ -1113,6 +1151,7 @@ vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 15) return tileMin(tileUv, tilePixel);
   if (index == 16) return tileMax(tileUv, tilePixel);
   if (index == 17) return tileMinMaxMix(tileUv, tilePixel);
+  if (index == 18) return tileMinMaxMorph(tileUv, tilePixel);
   return tileTodo(tileUv, tilePixel);
 }
 
@@ -1174,12 +1213,9 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //   5.   FRACT AND MOD             tiles 09, 10
 //   5b.  ENVELOPES                 tile 11
 //   6.   ABS                       tiles 12, 13, 14
-//   7.   MIN, MAX, MIX             tiles 15, 16, 17
+//   7.   MIN, MAX, MIX, MORPH      tiles 15, 16, 17, 18
 //
 // STILL TO DO:
-//
-// 7b. MAKE THE MIX MOVE. The next step for tile 17, written up at the end of
-//    its comment.
 //
 // 3. STEP AND CLAMP.  y = step(0.5, x), and y = clamp(x * 2.0 - 0.5, 0.0, 1.0)
 //    The hard cut, and the flattened ramp. Worth drawing once so the staircase
