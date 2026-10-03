@@ -327,8 +327,9 @@ vec3 drawGraph(in vec2 tileUv, in vec2 tilePixel, in float y, in float yNext) {
 // They also read as a list of the gallery's contents, which is a nice
 // side-effect of pulling them out.
 float fLinear(in float x)                     { return x; }
-float fSmoothstep(in float x)                 { return smoothstep(0.05, 0.95, x); }
 float fStep(in float x)                       { return step(0.5, x); }
+float fSmoothstep(in float x)                 { return smoothstep(0.05, 0.95, x); }
+float fClamp(in float x)                      { return clamp(x * 2.0 - 0.5, 0.0, 1.0); }
 float fPow(in float x, in float exponent)     { return pow(x, exponent); }
 float fSine(in float x)                       { return sin01(x * TWO_PI); }
 float fSinePhase(in float x)                  { return sin01(x * TWO_PI + iTime * WAVE_SPEED); }
@@ -394,7 +395,7 @@ vec3 tileLinear(in vec2 tileUv, in vec2 tilePixel) {
 //
 // It sits next to the linear tile on purpose. Tile 00 goes from 0 to 1 as
 // gently as possible; this one does the same trip as suddenly as possible,
-// and smoothstep (tile 03) is the whole range in between. In fact smoothstep
+// and smoothstep (tile 02) is the whole range in between. In fact smoothstep
 // with its two edges squeezed together IS a step: smoothstep(0.5, 0.5001, x)
 // is indistinguishable from this tile.
 //
@@ -428,7 +429,7 @@ vec3 tileStep(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fStep(x), fStep(x + tilePixel.x));
 }
 
-// * TILE 03 — SMOOTHSTEP, the ease.
+// * TILE 02 — SMOOTHSTEP, the ease.
 //
 // You have used smoothstep since scene 01 for anti-aliasing. This is the first
 // time you can SEE what it is: an S. Flat at both ends, steepest in the middle.
@@ -470,6 +471,57 @@ vec3 tileStep(in vec2 tileUv, in vec2 tilePixel) {
 vec3 tileSmoothstep(in vec2 tileUv, in vec2 tilePixel) {
   float x = tileUv.x;
   return drawGraph(tileUv, tilePixel, fSmoothstep(x), fSmoothstep(x + tilePixel.x));
+}
+
+// * TILE 03 — CLAMP, a ramp with flat landings.
+//
+// clamp(v, lo, hi) keeps v inside lo..hi: anything below lo becomes lo,
+// anything above hi becomes hi, and everything in between passes through
+// untouched. Here v is x * 2.0 - 0.5, a line twice as steep as tile 00 that
+// starts below the floor and ends above the roof:
+//
+//     x               0     0.25     0.5     0.75     1
+//     x * 2.0 - 0.5  -0.5    0       0.5     1       1.5    the raw line
+//     clamp(...)      0      0       0.5     1       1      cut to 0..1
+//
+//     1 |          ______        flat at 1: everything above the roof
+//       |         /
+//       |        /               the ramp, passed straight through
+//       |       /
+//     0 |______/                 flat at 0: everything below the floor
+//       0    0.25    0.75   1
+//
+// It is the "does this still fit 0..1?" reflex from the sine tiles, written
+// as a function: instead of the line leaving the tile (like tile 16's right
+// arm), clamp flattens whatever would have escaped.
+//
+// * THE THREE WAYS FROM 0 TO 1
+//
+// Read the first row of the gallery left to right: tile 00 goes evenly, tile
+// 01 jumps, tile 02 eases, and this one ramps between two flat runs. And it
+// is closer to smoothstep than it looks. Tile 02's comment shows smoothstep's
+// first line, t = clamp((x - edge0) / (edge1 - edge0), 0, 1). With edges 0.25
+// and 0.75 that t is (x - 0.25) / 0.5, which is exactly x * 2.0 - 0.5. So
+// this tile IS smoothstep(0.25, 0.75, x) with the S left out: the same trip,
+// with sharp corners where smoothstep has rounded ones. People call it
+// "linearstep" for that reason.
+//
+// * TWO CREASES, AND WHERE THEY COME FROM
+//
+// The corners at x = 0.25 and x = 0.75 are creases, the same kind min and
+// max leave, and for the same reason. clamp IS min and max:
+//
+//     clamp(v, 0.0, 1.0)  ==  min(max(v, 0.0), 1.0)
+//
+// max(v, 0) keeps v from going below the floor (one crease), then min(..., 1)
+// keeps it from going above the roof (the other). Tiles 17 and 18, used as
+// tools rather than drawn as graphs.
+//
+// The flat runs sit right on the frame, like step's. Since tile 01 moved the
+// border under the line, they show, 1 pixel thick for the same reason.
+vec3 tileClamp(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fClamp(x), fClamp(x + tilePixel.x));
 }
 
 // * TILES 04, 05, 06 — POWER, the bias dial.
@@ -1207,8 +1259,8 @@ vec3 tileTodo(in vec2 tileUv, in vec2 tilePixel) {
 vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 0)  return tileLinear(tileUv, tilePixel);
   if (index == 1)  return tileStep(tileUv, tilePixel);
-  // index 2: clamp, not written yet
-  if (index == 3)  return tileSmoothstep(tileUv, tilePixel);
+  if (index == 2)  return tileSmoothstep(tileUv, tilePixel);
+  if (index == 3)  return tileClamp(tileUv, tilePixel);
   if (index == 4)  return tilePow(tileUv, tilePixel, 0.5);
   if (index == 5)  return tilePow(tileUv, tilePixel, 1.0);
   if (index == 6)  return tilePow(tileUv, tilePixel, 2.0);
@@ -1271,7 +1323,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //
 //   LINEAR                          tile 00
 //   STEP                            tile 01
-//   SMOOTHSTEP                      tile 03
+//   SMOOTHSTEP                      tile 02
+//   CLAMP                           tile 03
 //   POWER                           tiles 04, 05, 06
 //   SINE: still, phase, amplitude   tiles 07, 08, 09
 //   SINE: frequency                 tile 10
@@ -1281,11 +1334,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //   MIN, MAX, MIX, MORPH            tiles 17, 18, 19, 20
 //
 // STILL TO DO:
-//
-// CLAMP, tile 02 (its slot is kept next to step).
-//    y = clamp(x * 2.0 - 0.5, 0.0, 1.0). A ramp with its ends flattened: the
-//    "keep it inside 0..1" reflex written as a function. Step is the jump,
-//    clamp is the same trip taken as a slope with flat landings at each end.
 //
 // THE LAST ROW, tiles 21 to 24, planned:
 //    21  PARABOLA              pow(4.0 * x * (1.0 - x), k)    a smooth hump
