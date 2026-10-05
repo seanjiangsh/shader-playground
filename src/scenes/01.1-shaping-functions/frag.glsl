@@ -338,6 +338,12 @@ float fParabola(in float x) {                 // vertex form, y = a * (x - h)^p 
   float p = 2.0;    // the power; 2.0 is a parabola
   return a * pow(abs(x - h), p) + k;   // abs, because pow() refuses negative bases
 }
+float fExp(in float x, in float rate) {       // exponential, squeezed to run 0 -> 1 — tile 08
+  if (abs(rate) < 0.001) return x;                // rate 0: a straight line (and 0 / 0 below)
+  float left  = 1.0;                                 // exp(rate * 0.0), raw value at the left edge
+  float right = exp(rate);                        // exp(rate * 1.0), raw value at the right edge
+  return (exp(rate * x) - left) / (right - left); // left edge -> 0, right edge -> 1
+}
 float fSine(in float x)                       { return sin01(x * TWO_PI); }
 float fSinePhase(in float x)                  { return sin01(x * TWO_PI + iTime * WAVE_SPEED); }
 float fSineAmplitude(in float x)              { return sin(x * PI) * sin01(iTime * PULSE_SPEED); }
@@ -666,6 +672,73 @@ vec3 tilePow(in vec2 tileUv, in vec2 tilePixel, in float exponent) {
 vec3 tileParabola(in vec2 tileUv, in vec2 tilePixel) {
   float x = tileUv.x;
   return drawGraph(tileUv, tilePixel, fParabola(x), fParabola(x + tilePixel.x));
+}
+
+// * TILE 08 — EXPONENTIAL, growth and decay from one rate dial.
+//
+// exp(rate * x) is "multiply by the same amount for every step you take".
+//
+//   rate above 0   every step ADDS the same fraction of what is there, so it
+//                  creeps, then races. Growth: interest, a spreading rumour.
+//   rate below 0   every step KEEPS the same fraction of what is left, so a
+//                  lot goes at first, then less and less, never quite zero.
+//                  Decay: a cooling cup, a fading echo, a light dimming.
+//
+// This tile draws rate +5: growth, squeezed to run 0 -> 1.
+//
+// * WHY A POSITIVE RATE FIRST SHOWED NOTHING
+//
+// The first version drew the raw exp(rate * x). exp() of anything is never
+// below 0, and exp(0) is exactly 1. So:
+//
+//     rate = -3     exp(-3x) runs from 1.00 down to 0.05    inside the tile
+//     rate = +3     exp(+3x) runs from 1.00 up to   20.1    above the roof
+//
+// With a positive rate the raw curve starts ON the top edge and climbs away,
+// so the whole tile was flat white and the line was off-screen. The same
+// "does it still fit 0..1?" problem as sine before sin01, and tile 18.
+//
+// * THE FIX: SQUEEZE WHATEVER COMES OUT INTO 0..1
+//
+// We know the curve's raw value at both edges: left = exp(0) = 1, and
+// right = exp(rate). Two moves turn that into exactly 0..1, rising like
+// every other ramp in the first row:
+//
+//     exp(rate * x) - left           slide it so the left edge sits on 0
+//     ... / (right - left)           scale it so the right edge lands on 1
+//
+// Same idea as sin01 and as mod(a, m) / m on tile 14: when you know a
+// function's range, you can map it onto any range you like. Now every rate
+// works, and its SIGN says where the change happens:
+//
+//     rate +5   creeps, then shoots up          y(0.5) = 0.08   this tile
+//     rate +3   the same, gentler               y(0.5) = 0.18
+//     rate  0   a straight line, y = x          y(0.5) = 0.50
+//     rate -3   shoots up, then levels off      y(0.5) = 0.82   the mirror
+//
+// The bigger the number, the more extreme the bend: rate 10 is still at
+// 0.007 in the middle, then climbs the whole way in the last stretch. Rate
+// exactly 0 has to be caught separately, because left and right are both 1
+// there and the division becomes 0 / 0; as the rate shrinks towards 0 the
+// curve really does straighten into y = x, so returning x is the honest
+// answer, not a patch.
+//
+// * RELATIVES
+//
+// Put it next to the power tiles (04 to 06): a positive rate bends like a
+// power above 1, a negative one like a power below 1. Rate 5 sits in the
+// middle at the same height as pow(x, 3.7). Same job, a different maths
+// behind it, and a different feel at the ends: exp keeps a little slope at
+// x = 0 where pow(x, 3.7) is flat.
+//
+// The second version of this tile ran from 1 down to 0 instead. Swapping
+// which edge maps to 0 flips it: this curve is exactly 1.0 minus that one
+// (checked to 1.5e-16). So the falling shape is still one line away:
+// 1.0 - fExp(x, rate). With rate -3 that is the classic decay curve, fast
+// drop then a long tail.
+vec3 tileExp(in vec2 tileUv, in vec2 tilePixel, in float rate) {
+  float x = tileUv.x;
+  return drawGraph(tileUv, tilePixel, fExp(x, rate), fExp(x + tilePixel.x, rate));
 }
 
 // * TILES 09 TO 12 — SINE, and the first things in the gallery that MOVE.
@@ -1331,7 +1404,7 @@ vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 5)  return tilePow(tileUv, tilePixel, 1.0);
   if (index == 6)  return tilePow(tileUv, tilePixel, 2.0);
   if (index == 7)  return tileParabola(tileUv, tilePixel);
-  // index 8: exponential impulse, not written yet
+  if (index == 8)  return tileExp(tileUv, tilePixel, 5.0);
   if (index == 9)  return tileSine(tileUv, tilePixel);
   if (index == 10) return tileSinePhase(tileUv, tilePixel);
   if (index == 11) return tileSineAmplitude(tileUv, tilePixel);
@@ -1395,6 +1468,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //   CLAMP                           tile 03
 //   POWER                           tiles 04, 05, 06
 //   PARABOLA                        tile 07
+//   EXPONENTIAL                     tile 08
 //   SINE: still, phase, amplitude   tiles 09, 10, 11
 //   SINE: frequency                 tile 12
 //   FRACT AND MOD                   tiles 13, 14
@@ -1405,11 +1479,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 // STILL TO DO:
 //
 // STILL OPEN, planned:
-//    08  EXPONENTIAL IMPULSE   h * exp(1.0 - h), h = k * x    fast hit, slow fade
 //    23  GAUSSIAN BELL         exp(-(x - 0.5)^2 / (2 s^2))    the tent, uncreased
 //    24  CUBIC BEZIER          a mix of mixes                 built from tile 21
-//    More Bezier, or a smoothstep "window", can go in a sixth row: raising
-//    TILES_DOWN to 6 adds five slots without moving any existing number.
+//    More Bezier, a smoothstep "window", or the exponential IMPULSE
+//    (h * exp(1.0 - h) with h = k * x: a fast hit, then a slow fade) can
+//    go in a sixth row: raising TILES_DOWN to 6 adds five slots without
+//    moving any existing number.
 //
 // ANIMATE ONE MORE.  Multiply anything by iTime inside a sin(), or move a
 //    smoothstep's edges with it, and watch the curve breathe. The graph is the
