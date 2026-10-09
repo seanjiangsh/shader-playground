@@ -383,6 +383,14 @@ float fMin(in float x)                   { return min(x, 1.0 - x); }           /
 float fMax(in float x)                   { return max(x, 1.0 - x); }           // the higher of two lines — tile 20
 float fMinMaxMix(in float x, in float t) { return mix(fMin(x), fMax(x), t); }  // tent at t = 0, V at t = 1 — tiles 21, 22
 
+// The bell's three dials come in as parameters, like fPow's exponent, so the
+// tile can drive them with time. Still pictures to try: (1.0, 0.2, 1.6).
+float fGaussianBell(in float x, in float D, in float w, in float m) {   // tile 23
+  float c = 0.5;    // centre: where the top sits
+  float d = x - c;  // how far this x is from the centre
+  return D * exp(-pow((d * d) / (w * w), m));   // d * d is never negative, so pow is safe
+}
+
 // * TILE 00 — LINEAR, y = x.
 //
 // The identity function, and the one to start from because there is nothing to
@@ -1381,6 +1389,67 @@ vec3 tileMinMaxMorph(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fMinMaxMix(x, t), fMinMaxMix(x + tilePixel.x, t));
 }
 
+// * TILE 23 — GAUSSIAN BELL, breathing on three dials at once.
+//
+// The bell is exp(-(distance from the centre)^2): 1 at the centre, falling
+// smoothly to almost nothing on both sides. It is the tent of tile 17 with
+// the crease rounded off, and the shape that blurs, glows and soft spots
+// are made of. Written with three dials, the same family as the "super
+// Gaussian" in Desmos:
+//
+//     y = D * exp( -( d^2 / w^2 )^m )        d = x - 0.5
+//
+//         D   height of the top
+//         w   width
+//         m   shape: 1 = classic bell, above 1 = flatter top and steeper
+//             sides, below 1 = a sharper peak with long tails
+//
+//       m = 1           m = 1.6           m = 4
+//         _               __               ____
+//        / \             /  \             |    |
+//      _/   \_         _/    \_         _|    |_
+//
+// A NEAT FACT ABOUT w: at a distance of exactly w from the centre, d^2 / w^2
+// is 1, and 1 to any power is 1. So every curve passes through D * exp(-1),
+// about 0.37 of the height, at the same two points whatever m is. w marks
+// where the sides are; m only decides how square the shoulders look.
+//
+// Why pow() is safe here, unlike in the parabola: d * d can never be
+// negative, so the base never is either. Keep m above 0.
+//
+// * MAKING IT MOVE
+//
+// Each dial gets its own slow swing with sin01, the same tool as tiles 09
+// to 12, and each at a DIFFERENT speed with a different starting offset:
+//
+//     D   0.4 .. 1.0    the bell rises and sinks          every ~7.0 s
+//     w   0.12 .. 0.25  it narrows and widens             every ~9.0 s
+//     m   0.7 .. 2.5    peaky, then shouldered, then back every ~12.6 s
+//
+// Different speeds mean the three never line up the same way twice in a
+// short while, so the shape keeps changing character instead of pulsing
+// on a fixed beat. One shared speed would just make one shape breathe.
+//
+// WHY THE RANGES STOP WHERE THEY DO. A narrow bell with a big m has very
+// steep sides, and past a slope of 20 screen pixels per pixel plot()'s
+// guard treats it as a cliff and drops the line. Measured over the whole
+// range: w down to 0.08 with m up to 4 reached a slope of 37 in tile units,
+// so the line would blink off on the sides. Stopping at w = 0.12 and m = 2.5
+// keeps the worst case at 15.7, under the guard on any window that is not
+// taller than it is wide. At the low end, m = 0.7 with the widest w leaves
+// the tails at 0.07 by the tile edges: a sharp peak with long tails, which
+// is exactly what m below 1 is supposed to look like.
+//
+// For the valley instead of the hill, 1.0 - fGaussianBell(...) keeps it
+// inside the tile; a negative D would push it below the floor.
+vec3 tileGaussianBell(in vec2 tileUv, in vec2 tilePixel) {
+  float x = tileUv.x;
+  float D = mix(0.4,  1.0,  sin01(iTime * 0.9));          // height
+  float w = mix(0.12, 0.25, sin01(iTime * 0.7 + 1.0));    // width
+  float m = mix(0.7,  2.5,  sin01(iTime * 0.5 + 2.0));    // shape
+  return drawGraph(tileUv, tilePixel, fGaussianBell(x, D, w, m), fGaussianBell(x + tilePixel.x, D, w, m));
+}
+
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
 vec3 tileTodo(in vec2 tileUv, in vec2 tilePixel) {
@@ -1419,6 +1488,7 @@ vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 20) return tileMax(tileUv, tilePixel);
   if (index == 21) return tileMinMaxMix(tileUv, tilePixel);
   if (index == 22) return tileMinMaxMorph(tileUv, tilePixel);
+  if (index == 23) return tileGaussianBell(tileUv, tilePixel);
   return tileTodo(tileUv, tilePixel);
 }
 
@@ -1475,11 +1545,11 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //   ENVELOPE                        tile 15
 //   ABS, TENT, MOVED CREASE         tiles 16, 17, 18
 //   MIN, MAX, MIX, MORPH            tiles 19, 20, 21, 22
+//   GAUSSIAN BELL, animated         tile 23
 //
 // STILL TO DO:
 //
 // STILL OPEN, planned:
-//    23  GAUSSIAN BELL         exp(-(x - 0.5)^2 / (2 s^2))    the tent, uncreased
 //    24  CUBIC BEZIER          a mix of mixes                 built from tile 21
 //    More Bezier, a smoothstep "window", or the exponential IMPULSE
 //    (h * exp(1.0 - h) with h = k * x: a fast hit, then a slow fade) can
