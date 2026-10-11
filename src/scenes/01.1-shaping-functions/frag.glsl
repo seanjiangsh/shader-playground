@@ -391,6 +391,18 @@ float fGaussianBell(in float x, in float D, in float w, in float m) {   // tile 
   return D * exp(-pow((d * d) / (w * w), m));   // d * d is never negative, so pow is safe
 }
 
+// A cubic Bezier through four heights spread evenly across the tile, built
+// from nothing but mix(). Blend neighbours, then blend the blends, until one
+// number is left — tile 24.
+float fBezier(in float x, in float p0, in float p1, in float p2, in float p3) {
+  float a = mix(p0, p1, x);   // level 2: three blends of neighbouring heights
+  float b = mix(p1, p2, x);
+  float c = mix(p2, p3, x);
+  float d = mix(a, b, x);     // level 3: two blends of those
+  float e = mix(b, c, x);
+  return mix(d, e, x);        // level 4: one blend left, and that is the curve
+}
+
 // * TILE 00 — LINEAR, y = x.
 //
 // The identity function, and the one to start from because there is nothing to
@@ -1450,6 +1462,70 @@ vec3 tileGaussianBell(in vec2 tileUv, in vec2 tilePixel) {
   return drawGraph(tileUv, tilePixel, fGaussianBell(x, D, w, m), fGaussianBell(x + tilePixel.x, D, w, m));
 }
 
+// * TILE 24 — CUBIC BEZIER, a mix of mixes.
+//
+// A Bezier curve is set by CONTROL POINTS. Here there are four heights,
+// spread evenly across the tile:
+//
+//     p0 at the left edge    p1 at 1/3    p2 at 2/3    p3 at the right edge
+//
+// The curve starts exactly on p0 and ends exactly on p3. The two middle
+// points do NOT sit on the curve: they pull it towards themselves, like
+// magnets, and the curve leans their way without ever touching them.
+//
+// HOW ONE x BECOMES ONE y. Every step is mix(a, b, x), "walk x of the way
+// from a to b", the same blend as tile 21. Start with the four heights and
+// blend neighbours until one number is left:
+//
+//     level 1:   p0    p1    p2    p3      four heights
+//                  \  /  \  /  \  /
+//     level 2:      a     b     c          a = mix(p0, p1, x), and so on
+//                    \   / \   /
+//     level 3:         d     e             d = mix(a, b, x), e = mix(b, c, x)
+//                       \   /
+//     level 4:           y                 y = mix(d, e, x)
+//
+// Six mix() calls and that is the whole curve. It has a name, de Casteljau's
+// algorithm, and it is how drawing programs have traced Bezier curves for
+// decades: the pen tool in every vector editor runs this.
+//
+// * THREE SHAPES YOU ALREADY KNOW
+//
+// The tile slides the two middle magnets with time, p1 = sin01(...) and
+// p2 = 1 - p1, so they move in opposite directions. Three moments are worth
+// catching:
+//
+//     p1 = 0,   p2 = 1     heights 0, 0, 1, 1        smoothstep's S, tile 02
+//     p1 = 1/3, p2 = 2/3   heights 0, 1/3, 2/3, 1    the straight line, tile 00
+//     p1 = 1,   p2 = 0     heights 0, 1, 0, 1        a wobble: up, flat, up
+//
+// The first two are exact, not just look-alikes (checked to 6e-16 and
+// 2e-16). smoothstep's t * t * (3 - 2t) IS a cubic Bezier, and evenly
+// spaced heights on a straight line give back the straight line. The
+// wobble is steepest at the ends and dead flat in the middle, at exactly
+// 0.5, where the two magnets' pulls cancel out.
+//
+// Over the whole swing the curve stays inside 0..1 and its steepest slope
+// is 3, so plot()'s guard never gets near it.
+//
+// * WHAT THIS VERSION LEAVES OUT
+//
+// Here the control points only move up and down, and stay evenly spaced
+// across the tile, so x can be used directly as "how far along the curve".
+// The cubic-bezier(x1, y1, x2, y2) easing in CSS also lets the middle points
+// move SIDEWAYS. Then x and "how far along" stop being the same thing, and
+// for each x you first have to solve for where along the curve you are,
+// usually by guessing and refining a few times. Worth a tile of its own in a
+// sixth row.
+vec3 tileBezier(in vec2 tileUv, in vec2 tilePixel) {
+  float x  = tileUv.x;
+  float p1 = sin01(iTime * PULSE_SPEED);   // the left magnet, 0..1
+  float p2 = 1.0 - p1;                     // the right magnet, always opposite
+  return drawGraph(tileUv, tilePixel,
+                   fBezier(x, 0.0, p1, p2, 1.0),
+                   fBezier(x + tilePixel.x, 0.0, p1, p2, 1.0));
+}
+
 // * TILE — NOT WRITTEN YET. Copy tileLinear, rename it, change the one line
 // that computes y, and add it to drawTile below.
 vec3 tileTodo(in vec2 tileUv, in vec2 tilePixel) {
@@ -1489,6 +1565,7 @@ vec3 drawTile(in int index, in vec2 tileUv, in vec2 tilePixel) {
   if (index == 21) return tileMinMaxMix(tileUv, tilePixel);
   if (index == 22) return tileMinMaxMorph(tileUv, tilePixel);
   if (index == 23) return tileGaussianBell(tileUv, tilePixel);
+  if (index == 24) return tileBezier(tileUv, tilePixel);
   return tileTodo(tileUv, tilePixel);
 }
 
@@ -1546,15 +1623,14 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 //   ABS, TENT, MOVED CREASE         tiles 16, 17, 18
 //   MIN, MAX, MIX, MORPH            tiles 19, 20, 21, 22
 //   GAUSSIAN BELL, animated         tile 23
+//   CUBIC BEZIER, animated          tile 24
 //
-// STILL TO DO:
-//
-// STILL OPEN, planned:
-//    24  CUBIC BEZIER          a mix of mixes                 built from tile 21
-//    More Bezier, a smoothstep "window", or the exponential IMPULSE
-//    (h * exp(1.0 - h) with h = k * x: a fast hit, then a slow fade) can
-//    go in a sixth row: raising TILES_DOWN to 6 adds five slots without
-//    moving any existing number.
+// NEXT: the 5 x 5 gallery is full. Ideas for a sixth row:
+//    More Bezier (control points that move sideways too, as in CSS
+//    cubic-bezier), a smoothstep "window", or the exponential IMPULSE
+//    (h * exp(1.0 - h) with h = k * x: a fast hit, then a slow fade).
+//    Raising TILES_DOWN to 6 adds five slots without moving any existing
+//    number.
 //
 // ANIMATE ONE MORE.  Multiply anything by iTime inside a sin(), or move a
 //    smoothstep's edges with it, and watch the curve breathe. The graph is the
