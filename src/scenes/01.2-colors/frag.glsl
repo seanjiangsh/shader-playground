@@ -32,7 +32,7 @@
 //        +-------------------+-------------------+
 //        | 0  TWO COLOURS,   | 1  ONE CURVE PER  |
 //        |    ONE CURVE      |    CHANNEL        |
-//        |    [done]         |    [your turn]    |
+//        |    [done]         |    [done]         |
 //        +-------------------+-------------------+
 //        | 2  HUE, SATURATION| 3  COLOUR WHEEL   |
 //        |    BRIGHTNESS     |                   |
@@ -123,33 +123,63 @@ vec3 panelTwoColors(in vec2 tileUv, in vec2 tilePixel) {
   return color;
 }
 
-// * PANEL 1 — ONE CURVE PER CHANNEL.  [your turn]
+// * PANEL 1 — ONE CURVE PER CHANNEL.  [done]
 //
-// Same as panel 0, but pct becomes a vec3, one shaping function per channel:
+// Panel 0 with pct turned into a vec3: one shaping function per channel,
+// and mix() blending each channel by its own amount.
 //
-//     vec3 pct = vec3(
-//       smoothstep(0.0, 1.0, x),     // red:   eases in and out
-//       sin(x * PI),                 // green: up and back down, an arch
-//       pow(x, 0.5)                  // blue:  rushes up early
-//     );
-//     vec3 color = mix(colorA, colorB, pct);
+//     red     smoothstep(0, 1, x)   eases in and out
+//     green   sin(x * PI)           up and back down, an arch
+//     blue    pow(x, 0.5)           rushes up early
 //
-// Then draw THREE lines, each in its own channel's colour, so you can see
-// which curve is steering which part of the colour:
+// The three curves live in one helper, channelCurves(), called twice: at x
+// for the colour, and one pixel to the right for plot(). Same lesson as the
+// f-functions in 1.1: write it once, so the two copies cannot drift apart.
 //
-//     color = mix(color, vec3(1.0, 0.0, 0.0), plot(..., pct.r, pctNext.r));
-//     ...and the same for green and blue.
+// * WHAT THE COLOURS SAY, measured from a render
 //
-// plot() needs each curve one pixel to the right as well, so build a
-// pctNext the same way, at x + tilePixel.x. Put the three curves in a small
-// helper function so you write them only once, the 1.1 lesson about copies
-// drifting apart.
+// Read any column straight down: the three lines' heights ARE the three
+// blend amounts, and the background is what mix() made of them.
 //
-// Worth noticing when it runs: where green's arch is high in the middle,
-// the colour turns greener than either end colour. A per-channel blend can
-// make colours that are not "between" a and b at all.
+//     x = 0      amounts (0, 0, 0)        deep blue, all colorA
+//     x = 0.5    amounts (0.5, 1, 0.71)   (0.57, 0.83, 0.43): light green
+//     x = 1      amounts (1, 0, 1)        (1.00, 0.14, 0.22): RED
+//
+// Two surprises worth keeping. The middle is greener than either end colour,
+// because green's arch is at the top there and colorB is the greener of the
+// two. And the right edge is not yellow at all: the arch has come back down
+// to 0, so green takes colorA's 0.14 while red and blue take colorB's. A
+// per-channel blend can make colours that are nowhere "between" a and b.
+//
+// LINE COLOURS. Pure red, green and blue, so each line says which channel
+// it steers. Each one only fades where it crosses a background close to its
+// own colour: the blue line at the far left (deep blue there) and the red
+// line at the far right (red there), about 2% of the width each, measured.
+// Fine for a picture you read by its middle; a dark outline under each line
+// would fix it if it ever matters.
+vec3 channelCurves(in float x) {
+  return vec3(
+    smoothstep(0.0, 1.0, x),   // red:   eases in and out
+    sin(x * PI),                        // green: up and back down, an arch
+    pow(x, 0.5)                          // blue:  rushes up early
+  );
+}
+
 vec3 panelPerChannel(in vec2 tileUv, in vec2 tilePixel) {
-  return mix(todoColor, borderColor, panelBorder(tileUv, tilePixel));
+  float x      = tileUv.x;
+  vec3 pct     = channelCurves(x);
+  vec3 pctNext = channelCurves(x + tilePixel.x);
+
+  vec3 red   = vec3(1.0, 0.0, 0.0);
+  vec3 green = vec3(0.0, 1.0, 0.0);
+  vec3 blue  = vec3(0.0, 0.0, 1.0);
+
+  vec3 color = mix(colorA, colorB, pct);                                   // 1. colour
+  color = mix(color, borderColor, panelBorder(tileUv, tilePixel));         // 2. border
+  color = mix(color, red,   plot(tileUv, tilePixel, pct.r, pctNext.r));    // 3. red line
+  color = mix(color, green, plot(tileUv, tilePixel, pct.g, pctNext.g));    //    green line
+  color = mix(color, blue,  plot(tileUv, tilePixel, pct.b, pctNext.b));    //    blue line
+  return color;
 }
 
 // * PANEL 2 — HUE, SATURATION, BRIGHTNESS.  [your turn]
