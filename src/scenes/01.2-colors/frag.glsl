@@ -36,7 +36,7 @@
 //        +-------------------+-------------------+
 //        | 2  HUE, SATURATION| 3  COLOUR WHEEL   |
 //        |    BRIGHTNESS     |                   |
-//        |    [your turn]    |    [your turn]    |
+//        |    [done]         |    [your turn]    |
 //        +-------------------+-------------------+
 //
 // Each panel is one function, panelXxx(tileUv, tilePixel), and drawPanel
@@ -182,26 +182,61 @@ vec3 panelPerChannel(in vec2 tileUv, in vec2 tilePixel) {
   return color;
 }
 
-// * PANEL 2 — HUE, SATURATION, BRIGHTNESS.  [your turn]
+// * PANEL 2 — HUE, SATURATION, BRIGHTNESS.  [done, one extra left]
 //
 // RGB says how much of each light to mix. HSB describes a colour the way
 // people talk about it:
 //
 //     hue          which colour, as a position around the rainbow, 0..1
 //                  (0 red, 1/3 green, 2/3 blue, and 1 is red again)
-//     saturation   how vivid: 0 is grey, 1 is the purest version
+//     saturation   how vivid: 0 is no colour at all (white, or grey once
+//                  brightness drops), 1 is the purest version
 //     brightness   how light: 0 is black, 1 is full
 //
-// The panel: hue going left to right, brightness going bottom to top, so
-// the whole rainbow fades to black towards the bottom.
+// The panel: hue left to right, brightness bottom to top, saturation fixed
+// at 1. So the full rainbow runs along the top and fades to black at the
+// bottom.
 //
-// You need a function hsb2rgb(vec3 c) that turns (hue, sat, bright) into a
-// vec3 RGB colour. The Book of Shaders gives a short one; it is made of
-// abs, mod and clamp, all three of which you have drawn as graphs in 1.1.
-// Try to read it as three shaping functions of hue, one per channel: that
-// is exactly what it is.
+// * READING hsb2rgb, from The Book of Shaders
+//
+// The first line builds the rainbow out of four things you drew in 1.1,
+// worked from the inside out, for all three channels at once:
+//
+//     c.x * 6.0 + vec3(0, 4, 2)   hue stretched to 0..6, each channel
+//                                 given its own head start
+//     mod(..., 6.0)               wrap around past the end   (tile 14)
+//     abs(... - 3.0)              slide and fold into a V    (tiles 16-18)
+//     ... - 1.0, clamp to 0..1    lower it, flatten the rest (tile 03)
+//
+// The result is ONE flat-topped bump per channel, the same shape shifted
+// by a third of the rainbow each time. Traced by hand: hue 0 gives
+// (1, 0, 0), red; hue 1/3 gives (0, 1, 0), green. The second line is
+// smoothstep's t * t * (3 - 2t) from tile 02, rounding the bumps' corners.
+// The third mixes from white towards that colour by the saturation, then
+// multiplies by the brightness.
+//
+// * EXTRA, YOUR TURN: SEE THE THREE CURVES
+//
+// Draw the three channels of hsb2rgb(vec3(x, 1.0, 1.0)) as red, green and
+// blue lines on this panel, exactly as panel 1 does with channelCurves:
+// the value at x for the line, and at x + tilePixel.x for plot(). The
+// rainbow turns out to be three shifted shaping functions, nothing more.
+// The lines will sit on top of a brightness gradient, so the low parts are
+// easiest to read near the top of the panel.
+vec3 hsb2rgb(in vec3 c) {
+  vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+  rgb = rgb * rgb * (3.0 - 2.0 * rgb);       // soften the corners: smoothstep's curve
+  return c.z * mix(vec3(1.0), rgb, c.y);     // saturation from white, then brightness
+}
+
 vec3 panelHSB(in vec2 tileUv, in vec2 tilePixel) {
-  return mix(todoColor, borderColor, panelBorder(tileUv, tilePixel));
+  float hue        = tileUv.x;   // left to right: around the rainbow
+  float saturation = 1.0;        // fully vivid
+  float brightness = tileUv.y;   // bottom to top: black to full
+
+  vec3 color = hsb2rgb(vec3(hue, saturation, brightness));            // 1. colour
+  color = mix(color, borderColor, panelBorder(tileUv, tilePixel));    // 2. border
+  return color;
 }
 
 // * PANEL 3 — COLOUR WHEEL.  [your turn]
