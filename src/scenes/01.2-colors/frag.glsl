@@ -44,10 +44,13 @@
 // from level 1.1 (GLSL has no #include here), so they behave identically.
 
 // * TUNING — each dial labelled with its space.
-const float PANELS_ACROSS = 2.0;   // count
-const float PANELS_DOWN   = 2.0;   // count
-const float LINE_PIXELS   = 2.0;   // screen pixels: a graph line's width
-const float BORDER_PIXELS = 1.0;   // screen pixels: the panel separator
+const float PANELS_ACROSS      = 2.0;  // count
+const float PANELS_DOWN        = 2.0;  // count
+const float LINE_PIXELS        = 2.0;  // screen pixels: a graph line's width
+const float BORDER_PIXELS      = 1.0;  // screen pixels: the panel separator
+const float CHANNEL_GAP_PIXELS = 4.0;  // screen pixels: how far apart panel 2 nudges its three curves
+const float CHART_LOW          = 0.02;  // panel units: where a curve's 0 is drawn in panel 2
+const float CHART_HIGH         = 0.98;  // panel units: where a curve's 1 is drawn in panel 2
 
 // * PALETTE
 //
@@ -67,6 +70,12 @@ vec3 colorA      = vec3(0.149, 0.141, 0.912);  // deep blue
 vec3 colorB      = vec3(1.000, 0.833, 0.224);  // warm yellow
 vec3 curveColor  = vec3(0.000, 0.000, 0.000);  // black, for panel 0's line
 vec3 borderColor = vec3(0.35, 0.42, 0.62);
+
+// One line colour per channel, shared by panels 1 and 2 so "the red line
+// is the red channel" means the same thing everywhere.
+vec3 redLine     = vec3(1.0, 0.0, 0.0);
+vec3 greenLine   = vec3(0.0, 1.0, 0.0);
+vec3 blueLine    = vec3(0.0, 0.0, 1.0);
 vec3 todoColor   = vec3(0.11, 0.10, 0.16);
 
 // * CONSTANTS
@@ -170,19 +179,15 @@ vec3 panelPerChannel(in vec2 tileUv, in vec2 tilePixel) {
   vec3 pct     = channelCurves(x);
   vec3 pctNext = channelCurves(x + tilePixel.x);
 
-  vec3 red   = vec3(1.0, 0.0, 0.0);
-  vec3 green = vec3(0.0, 1.0, 0.0);
-  vec3 blue  = vec3(0.0, 0.0, 1.0);
-
-  vec3 color = mix(colorA, colorB, pct);                                   // 1. colour
-  color = mix(color, borderColor, panelBorder(tileUv, tilePixel));         // 2. border
-  color = mix(color, red,   plot(tileUv, tilePixel, pct.r, pctNext.r));    // 3. red line
-  color = mix(color, green, plot(tileUv, tilePixel, pct.g, pctNext.g));    //    green line
-  color = mix(color, blue,  plot(tileUv, tilePixel, pct.b, pctNext.b));    //    blue line
+  vec3 color = mix(colorA, colorB, pct);                                       // 1. colour
+  color = mix(color, borderColor, panelBorder(tileUv, tilePixel));             // 2. border
+  color = mix(color, redLine,   plot(tileUv, tilePixel, pct.r, pctNext.r));    // 3. red line
+  color = mix(color, greenLine, plot(tileUv, tilePixel, pct.g, pctNext.g));    //    green line
+  color = mix(color, blueLine,  plot(tileUv, tilePixel, pct.b, pctNext.b));    //    blue line
   return color;
 }
 
-// * PANEL 2 — HUE, SATURATION, BRIGHTNESS.  [done, one extra left]
+// * PANEL 2 — HUE, SATURATION, BRIGHTNESS.  [done]
 //
 // RGB says how much of each light to mix. HSB describes a colour the way
 // people talk about it:
@@ -215,14 +220,43 @@ vec3 panelPerChannel(in vec2 tileUv, in vec2 tilePixel) {
 // The third mixes from white towards that colour by the saturation, then
 // multiplies by the brightness.
 //
-// * EXTRA, YOUR TURN: SEE THE THREE CURVES
+// * THE THREE CURVES ON TOP
 //
-// Draw the three channels of hsb2rgb(vec3(x, 1.0, 1.0)) as red, green and
-// blue lines on this panel, exactly as panel 1 does with channelCurves:
-// the value at x for the line, and at x + tilePixel.x for plot(). The
-// rainbow turns out to be three shifted shaping functions, nothing more.
-// The lines will sit on top of a brightness gradient, so the low parts are
-// easiest to read near the top of the panel.
+// The red, green and blue lines are the three channels of
+// hsb2rgb(vec3(x, 1.0, 1.0)): the rainbow drawn as three shifted
+// flat-topped bumps, each a third of the way along from the last.
+//
+//     hue     0    1/6   1/3   1/2   2/3   5/6    1
+//     red     1     1     0     0     0     1     1
+//     green   0     1     1     1     0     0     0
+//     blue    0     0     0     1     1     1     0
+//             red yellow green cyan blue magenta red
+//
+// Read any column down and you get that hue: yellow is red 1 + green 1.
+//
+// WHY THE FIRST VERSION DID NOT LOOK LIKE THIS, even though its maths was
+// right. Two things hid the flat parts, which are the whole shape:
+//
+//   1. Every flat run sits at exactly 0 or 1, ON the panel's frame, and two
+//      channels are often flat together, so their lines lay on top of each
+//      other and only the last one drawn showed.
+//   2. Each channel is at 1 exactly where the background contains that
+//      colour: a red line at the top over red, a blue line over blue. A
+//      line the colour of its background disappears.
+//
+// What was left visible was mostly the slopes, which read as three humps
+// in mixed colours rather than three plateaus. The fix is all display, not
+// maths: the chart is squeezed into 0.1..0.9 to lift it off the frame, and
+// the three curves are nudged a few pixels apart so shared flat runs sit
+// side by side. The lines are now a picture of the curves' SHAPES; their
+// height is no longer the exact value, which is fine for a chart.
+//
+// Point 2 is still partly there, on purpose: the lines keep panel 1's plain
+// look, with no outline. Measured, each line sits on a background close to
+// its own colour for about 12% of the width, the far ends of the red top
+// run and the middles of the green and blue ones, where it gets faint.
+// Moving the chart into the darker lower half of the panel (CHART_LOW 0.05,
+// CHART_HIGH 0.5) brings that to 0%, if it ever bothers you.
 vec3 hsb2rgb(in vec3 c) {
   vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
   rgb = rgb * rgb * (3.0 - 2.0 * rgb);       // soften the corners: smoothstep's curve
@@ -236,6 +270,23 @@ vec3 panelHSB(in vec2 tileUv, in vec2 tilePixel) {
 
   vec3 color = hsb2rgb(vec3(hue, saturation, brightness));            // 1. colour
   color = mix(color, borderColor, panelBorder(tileUv, tilePixel));    // 2. border
+
+  // 3. The rainbow's three channel curves, drawn as a chart on top. Full
+  // saturation and brightness here, whatever the background is doing.
+  vec3 rgb     = hsb2rgb(vec3(hue,               1.0, 1.0));
+  vec3 rgbNext = hsb2rgb(vec3(hue + tilePixel.x, 1.0, 1.0));
+
+  // Squeeze 0..1 into CHART_LOW..CHART_HIGH so the flat runs come off the
+  // frame, then nudge the three curves apart (red up, blue down) so where
+  // two channels are flat together their lines sit side by side instead
+  // of on top of each other.
+  vec3 nudge     = vec3(1.0, 0.0, -1.0) * CHANNEL_GAP_PIXELS * tilePixel.y;
+  vec3 lineY     = mix(vec3(CHART_LOW), vec3(CHART_HIGH), rgb)     + nudge;
+  vec3 lineYNext = mix(vec3(CHART_LOW), vec3(CHART_HIGH), rgbNext) + nudge;
+
+  color = mix(color, redLine,   plot(tileUv, tilePixel, lineY.r, lineYNext.r));
+  color = mix(color, greenLine, plot(tileUv, tilePixel, lineY.g, lineYNext.g));
+  color = mix(color, blueLine,  plot(tileUv, tilePixel, lineY.b, lineYNext.b));
   return color;
 }
 
