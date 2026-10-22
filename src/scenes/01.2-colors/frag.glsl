@@ -36,7 +36,7 @@
 //        +-------------------+-------------------+
 //        | 2  HUE, SATURATION| 3  COLOUR WHEEL   |
 //        |    BRIGHTNESS     |                   |
-//        |    [done]         |    [your turn]    |
+//        |    [done]         |    [done]         |
 //        +-------------------+-------------------+
 //
 // Each panel is one function, panelXxx(tileUv, tilePixel), and drawPanel
@@ -290,22 +290,60 @@ vec3 panelHSB(in vec2 tileUv, in vec2 tilePixel) {
   return color;
 }
 
-// * PANEL 3 — COLOUR WHEEL.  [your turn]
+// * PANEL 3 — COLOUR WHEEL.  [done]
 //
 // The same HSB colours, wrapped into a circle: hue becomes the ANGLE around
 // the centre, and saturation the DISTANCE from it, so the middle is white
 // and the rim is the pure rainbow.
 //
-//     angle:    atan(p.y, p.x) gives -PI..PI; divide by TWO_PI and add 0.5
-//               to turn it into 0..1, a hue
-//     distance: length(p), how far from the centre
+//     p        tileUv - 0.5   measured from the panel's centre, not its
+//                             corner, so the angle can go all the way round
+//     hue      atan(p.y, p.x) gives -PI..PI; / TWO_PI makes it -0.5..0.5,
+//              + 0.5 makes it 0..1
+//     radius   length(p) * 2  0 at the centre, 1 at the edge of the wheel
 //
-// where p is this pixel measured from the panel's centre. One catch: the
-// panels stretch with the window, so a circle in tileUv units comes out as
-// an oval. Scale p.x by the panel's width-to-height ratio first, which you
-// can get from tilePixel (it already holds one pixel's size on each axis).
+// Going round the wheel anticlockwise from the left (atan's -PI) the hue
+// runs 0 to 1: red, yellow, green, cyan, blue, magenta and back to red, the
+// same order as panel 2 read left to right.
+//
+// * TWO FIXES ON TOP OF THE FIRST VERSION
+//
+// ROUND, NOT OVAL. Panels stretch with the window, so one step in tileUv
+// is more pixels across than up, and a circle in tileUv units came out as
+// a wide oval. Multiplying p.x by the panel's width-to-height ratio puts
+// both axes in the same units, measured in panel HEIGHTS. That ratio is
+// already in tilePixel, which holds one pixel's size on each axis:
+//
+//     panel width / panel height  =  tilePixel.y / tilePixel.x
+//
+// (a pixel is a SMALLER fraction of the wider side, so the ratio is the
+// other way up from what you might expect). The wheel's diameter is then
+// the panel's height, and the spare width on each side holds the corners.
+//
+// THE CORNERS. Outside the wheel, length(p) * 2 passes 1, and a saturation
+// above 1 pushes mix(white, rainbow, s) PAST the rainbow. Measured in the
+// first version, channels went as low as -0.41. The screen quietly clamps
+// that to 0, so the picture did not look broken, but the numbers were
+// outside 0..1, and that bites as soon as the colour feeds into anything
+// else (another mix, lighting, adding glows). min(radius, 1.0) holds the
+// saturation at the pure rainbow from the rim outwards, so the corners
+// carry the rim's colour on and every channel stays in 0..1. Same "does it
+// still fit 0..1?" reflex as level 1.1.
+//
+// One quiet detail: atan(0, 0) has no proper answer, and it would be asked
+// at the exact centre. No pixel centre lands there (pixel centres sit at
+// half-pixel positions), and the centre is white whatever the hue anyway,
+// because saturation is 0 there.
 vec3 panelWheel(in vec2 tileUv, in vec2 tilePixel) {
-  return mix(todoColor, borderColor, panelBorder(tileUv, tilePixel));
+  float aspect = tilePixel.y / tilePixel.x;     // panel width / height, from pixel sizes
+
+  vec2  p      = tileUv - 0.5;                          // from the centre, -0.5..0.5
+  p.x         *= aspect;                                // same units on both axes: round, not oval
+  float hue    = atan(p.y, p.x) / TWO_PI + 0.5;    // angle around the centre, as 0..1
+  float radius = min(length(p) * 2.0, 1.0);     // 0 at the centre, 1 at the rim and beyond
+
+  vec3  color  = hsb2rgb(vec3(hue, radius, 1.0));                  // 1. colour
+  return mix(color, borderColor, panelBorder(tileUv, tilePixel));  // 2. border
 }
 
 // * DISPATCH — panel index in, colour out.
