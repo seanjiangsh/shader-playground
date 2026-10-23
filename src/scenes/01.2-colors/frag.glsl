@@ -298,13 +298,45 @@ vec3 panelHSB(in vec2 tileUv, in vec2 tilePixel) {
 //
 //     p        tileUv - 0.5   measured from the panel's centre, not its
 //                             corner, so the angle can go all the way round
-//     hue      atan(p.y, p.x) gives -PI..PI; / TWO_PI makes it -0.5..0.5,
-//              + 0.5 makes it 0..1
-//     radius   length(p) * 2  0 at the centre, 1 at the edge of the wheel
+//     hue      atan(p.y, p.x) / TWO_PI   the direction, in turns, -0.5..0.5
+//     radius   length(p) * 2             0 at the centre, 1 at the wheel's edge
 //
-// Going round the wheel anticlockwise from the left (atan's -PI) the hue
-// runs 0 to 1: red, yellow, green, cyan, blue, magenta and back to red, the
-// same order as panel 2 read left to right.
+// * atan, AND WHERE THE COLOURS LAND
+//
+// atan(y, x) answers "which direction is this point from the centre?" as
+// an angle in radians, starting from the right and counting anticlockwise:
+//
+//                    up   PI/2  (90 degrees)
+//                          |
+//     left  PI or -PI -----+----- 0  right
+//                          |
+//                  down  -PI/2  (-90 degrees)
+//
+// Above the centre the angle is positive, below it negative. It takes y and
+// x separately, not y / x, because the signs say which side the point is
+// on: (1, 1) and (-1, -1) have the same y / x but opposite directions.
+// Dividing by TWO_PI turns radians into fractions of a turn, -0.5..0.5.
+//
+// That puts the colours where the standard hue wheel has them:
+//
+//     0 degrees    right          hue 0      red
+//     120 degrees  upper left     hue 1/3    green
+//     240 degrees  lower left     hue -1/3   blue (the same spot as 2/3)
+//
+// THE NEGATIVE HALF NEEDS NO FIX. Below the centre hue is negative, but a
+// hue is a position on a circle, so -1/3 and 2/3 are the same spot, a third
+// of a turn back from red or two thirds forward. hsb2rgb starts with
+// mod(hue * 6.0 + ..., 6.0), which folds any hue back into one turn, and
+// GLSL's mod rounds down, so negatives come out positive (the tile 14 note
+// about C and JavaScript's % working differently). Checked: with or without
+// fract() around the hue, every colour matches to 8.9e-16.
+//
+// fract(hue) would only matter if the hue went somewhere that does NOT wrap
+// by itself: plotted as a line, compared ("above 0.5?"), or handed to a
+// different colour function. Then -1/3 would show up as wrong.
+//
+// An earlier version added 0.5 to make the hue 0..1. That works too, but it
+// turns the wheel half a turn, putting red on the left instead of the right.
 //
 // * TWO FIXES ON TOP OF THE FIRST VERSION
 //
@@ -335,12 +367,12 @@ vec3 panelHSB(in vec2 tileUv, in vec2 tilePixel) {
 // half-pixel positions), and the centre is white whatever the hue anyway,
 // because saturation is 0 there.
 vec3 panelWheel(in vec2 tileUv, in vec2 tilePixel) {
-  float aspect = tilePixel.y / tilePixel.x;     // panel width / height, from pixel sizes
+  float aspect = tilePixel.y / tilePixel.x;  // panel width / height, from pixel sizes
 
-  vec2  p      = tileUv - 0.5;                          // from the centre, -0.5..0.5
-  p.x         *= aspect;                                // same units on both axes: round, not oval
-  float hue    = atan(p.y, p.x) / TWO_PI + 0.5;    // angle around the centre, as 0..1
-  float radius = min(length(p) * 2.0, 1.0);     // 0 at the centre, 1 at the rim and beyond
+  vec2  p      = tileUv - 0.5;               // from the centre, -0.5..0.5
+  p.x         *= aspect;                     // same units on both axes: round, not oval
+  float hue    = atan(p.y, p.x) / TWO_PI;    // direction in turns, -0.5..0.5; hsb2rgb wraps it
+  float radius = min(length(p) * 2.0, 1.0);  // 0 at the centre, 1 at the rim and beyond
 
   vec3  color  = hsb2rgb(vec3(hue, radius, 1.0));                  // 1. colour
   return mix(color, borderColor, panelBorder(tileUv, tilePixel));  // 2. border
