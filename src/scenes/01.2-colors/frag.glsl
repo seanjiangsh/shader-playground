@@ -340,17 +340,32 @@ vec3 panelHSB(in vec2 tileUv, in vec2 tilePixel) {
 //
 // * TWO FIXES ON TOP OF THE FIRST VERSION
 //
-// ROUND, NOT OVAL. Panels stretch with the window, so one step in tileUv
-// is more pixels across than up, and a circle in tileUv units came out as
-// a wide oval. Multiplying p.x by the panel's width-to-height ratio puts
-// both axes in the same units, measured in panel HEIGHTS. That ratio is
-// already in tilePixel, which holds one pixel's size on each axis:
+// ROUND, NOT OVAL, ON ANY SCREEN. Panels stretch with the window, so one
+// step in tileUv is a different number of pixels across than up, and a
+// circle in tileUv units comes out as an oval. The fix is to measure both
+// axes in the same unit: the panel's SHORT side.
 //
-//     panel width / panel height  =  tilePixel.y / tilePixel.x
+//     panelSize = 1.0 / tilePixel     the panel in pixels: tilePixel is one
+//                                     pixel in panel units, so flip it
+//     p *= panelSize / min(panelSize.x, panelSize.y)
 //
-// (a pixel is a SMALLER fraction of the wider side, so the ratio is the
-// other way up from what you might expect). The wheel's diameter is then
-// the panel's height, and the spare width on each side holds the corners.
+// The short side is multiplied by 1 and keeps its -0.5..0.5. The long side
+// is stretched past that, and the extra is the spare space beside (or
+// above and below) the wheel. So the wheel's diameter is always the short
+// side, and the whole rim always fits.
+//
+//     wide panel (450 x 300)   short side is the height: wheel 300 across
+//     tall panel (300 x 600)   short side is the width:  wheel 300 across
+//
+// THE BUG THIS REPLACED. The first fix scaled only p.x, by width / height,
+// which measures in panel HEIGHTS. Fine while the panel is wider than it
+// is tall. On a tall phone-shaped panel the height is the LONG side, so
+// the wheel came out wider than the panel and its rim fell off the left
+// and right: at the middle of the right edge, with width / height = 0.5,
+// radius was only 0.5, a half-white red that read as pink. Checked after
+// the fix: saturation is 1.0 at the middle of the right edge and the top
+// edge for a wide, a tall and a square window. The same "anchor to the
+// short edge" idea as the centred pos in scene 01.
 //
 // THE CORNERS. Outside the wheel, length(p) * 2 passes 1, and a saturation
 // above 1 pushes mix(white, rainbow, s) PAST the rainbow. Measured in the
@@ -367,12 +382,12 @@ vec3 panelHSB(in vec2 tileUv, in vec2 tilePixel) {
 // half-pixel positions), and the centre is white whatever the hue anyway,
 // because saturation is 0 there.
 vec3 panelWheel(in vec2 tileUv, in vec2 tilePixel) {
-  float aspect = tilePixel.y / tilePixel.x;  // panel width / height, from pixel sizes
+  vec2  panelSize = 1.0 / tilePixel;                         // the panel, in screen pixels
 
-  vec2  p      = tileUv - 0.5;               // from the centre, -0.5..0.5
-  p.x         *= aspect;                     // same units on both axes: round, not oval
-  float hue    = atan(p.y, p.x) / TWO_PI;    // direction in turns, -0.5..0.5; hsb2rgb wraps it
-  float radius = min(length(p) * 2.0, 1.0);  // 0 at the centre, 1 at the rim and beyond
+  vec2  p      = tileUv - 0.5;                               // from the centre, -0.5..0.5
+  p           *= panelSize / min(panelSize.x, panelSize.y);  // measured in the SHORT side: round, and fits
+  float hue    = atan(p.y, p.x) / TWO_PI;                    // direction in turns, -0.5..0.5; hsb2rgb wraps it
+  float radius = min(length(p) * 2.0, 1.0);                  // 0 at the centre, 1 at the rim and beyond
 
   vec3  color  = hsb2rgb(vec3(hue, radius, 1.0));                  // 1. colour
   return mix(color, borderColor, panelBorder(tileUv, tilePixel));  // 2. border
