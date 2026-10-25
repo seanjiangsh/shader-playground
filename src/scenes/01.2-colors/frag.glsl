@@ -377,6 +377,50 @@ vec3 panelHSB(in vec2 tileUv, in vec2 tilePixel) {
 // carry the rim's colour on and every channel stays in 0..1. Same "does it
 // still fit 0..1?" reflex as level 1.1.
 //
+// * FROM WHITE TO COLOUR, WITHOUT A RING
+//
+// With saturation = radius, two things showed. A ring at the rim: the
+// saturation climbs at a steady rate and then min() stops it dead, and the
+// eye is very good at spotting a gradient that suddenly changes speed even
+// with no jump in colour. It is the crease that clamp, min and max leave
+// (tiles 03, 19, 20), drawn as a circle. And a pale inside: a straight ramp
+// is only half saturated at half the radius.
+//
+// The fix is a different shaping curve between radius and saturation, one
+// that rises fast near the centre and arrives at 1 FLAT. The parabola from
+// tile 07, flipped so its flat end lands at the rim:
+//
+//     saturation = 1 - (1 - radius)^3
+//
+//     curve             at half radius   slope at the rim   slope at centre
+//     straight ramp         0.50              1 (ring)            1
+//     1 - (1 - r)^2         0.75              0                   2
+//     1 - (1 - r)^3         0.88              0                   3    <- used
+//     1 - (1 - r)^5         0.97              0                   5
+//     smoothstep            0.50              0                   0
+//
+// The power is a taste dial, and every power above 1 lands flat, so none of
+// them brings the ring back: 2 is gentle, 5 makes colour arrive almost at
+// once and leaves only a pinprick of white, and 3 sits between, keeping a
+// soft white centre. smoothstep removes the ring too but starts flat as
+// well, so the white centre grows instead of shrinking.
+//
+// TWO THINGS THE FIRST TRY GOT WRONG, worth knowing:
+//
+//   1. It used 1 - pow(1 - length(p), 5) directly. Without the * 2 the
+//      rim sits at length 0.5, where the curve is still climbing (0.97,
+//      slope 0.31), so a faint ring stays. Worse, without the min() the
+//      corners of a stretched panel go past length 1, and pow() gets a
+//      negative base, which GLSL leaves undefined (NaN or garbage,
+//      depending on the GPU). Measured: corners reach length 1.12 on a
+//      600 x 1200 window and 1.42 on 1600 x 600. Clamping radius first
+//      keeps 1 - radius at 0 or above everywhere.
+//   2. smoothstep(0.0, 1.0, 1.0) was given the number 1 as its input, not
+//      the radius, so every pixel got saturation 1 and the white centre
+//      vanished. The third argument is the thing being eased:
+//      smoothstep(0.0, 1.0, length(p) * 2.0). It clamps by itself, so no
+//      min() is needed there.
+//
 // One quiet detail: atan(0, 0) has no proper answer, and it would be asked
 // at the exact centre. No pixel centre lands there (pixel centres sit at
 // half-pixel positions), and the centre is white whatever the hue anyway,
@@ -389,7 +433,13 @@ vec3 panelWheel(in vec2 tileUv, in vec2 tilePixel) {
   float hue    = atan(p.y, p.x) / TWO_PI;                    // direction in turns, -0.5..0.5; hsb2rgb wraps it
   float radius = min(length(p) * 2.0, 1.0);                  // 0 at the centre, 1 at the rim and beyond
 
-  vec3  color  = hsb2rgb(vec3(hue, radius, 1.0));                  // 1. colour
+  // Saturation from the radius through an ease-out curve: colour arrives
+  // fast, and lands at 1 with zero slope, so no ring shows at the rim.
+  float saturation = 1.0 - pow(1.0 - radius, 3.0);
+  // float saturation = radius;                                // straight ramp: pale inside, ring at the rim
+  // float saturation = smoothstep(0.0, 1.0, length(p) * 2.0); // no ring, but a big white centre
+
+  vec3  color  = hsb2rgb(vec3(hue, saturation, 1.0));              // 1. colour
   return mix(color, borderColor, panelBorder(tileUv, tilePixel));  // 2. border
 }
 
