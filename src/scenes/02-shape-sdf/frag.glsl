@@ -1,4 +1,4 @@
-// * LEVEL 2 — SIGNED DISTANCE FIELDS. Exercises 1 to 8 done.
+// * LEVEL 2 — SIGNED DISTANCE FIELDS. A gallery: one panel per exercise.
 //
 // House style, repo-wide: every SECTION heading starts with `// *`, and the
 // lines under it are plain `//`. The Better Comments extension paints the
@@ -17,50 +17,39 @@
 //
 // * HOW THIS FILE IS ORGANISED
 //
-// Everything used to live in one long mainImage. It is now one function per
-// idea, so mainImage reads as the pipeline and each step's notes sit with the
-// step rather than scrolling past it:
+// It used to be one picture built up over exercises 1 to 8, each new idea
+// layered on the last. It is now a 4 x 4 gallery like levels 1.1 and 1.2:
+// one panel per exercise, so every idea can be seen on its own, beside the
+// one before it. The finished picture from before still exists, whole, in
+// panel 12.
 //
-//    centredPos / pixelSize    where am I, and how big is a pixel
-//    repeatDomain              fold the plane into one repeating cell
-//    fitToCell                 shrink the artwork to fit that cell
-//    sceneField                circle + box -> ONE distance      <- the maths
-//    coverage / outlineField / glowFrom / contourRings           <- the masks
-//    paintLayers               stack colors using those masks    <- the picture
+//        +----------------+----------------+----------------+----------------+
+//        | 0  the field   | 1  mask, AA    | 2  contours    | 3  box         |
+//        +----------------+----------------+----------------+----------------+
+//        | 4  union       | 5  intersect   | 6  circle-box  | 7  box-circle  |
+//        +----------------+----------------+----------------+----------------+
+//        | 8  morph       | 9  smooth      | 10 outline     | 11 glow        |
+//        |                |    union       |                |                |
+//        +----------------+----------------+----------------+----------------+
+//        | 12 repeat, all | 13 per-cell    | 14 drop shadow | 15 transforms  |
+//        |    together    |    identity    |    [your turn] |    [next]      |
+//        |                |    [your turn] |                |                |
+//        +----------------+----------------+----------------+----------------+
 //
-// The split between the last two is the one worth keeping. A mask says WHERE
-// something is; painting says WHAT color goes there and IN WHAT ORDER. Both
-// bugs in exercise 8 were painting bugs wearing a maths costume, so the file
-// now keeps them visibly apart.
+// Each panel's lessons live in that panel's own comment, right above its
+// function. The shared machinery comes first, in the order a pixel uses it:
 //
-// * THE PICTURE IS BUILT IN LAYERS, back to front:
+//    sdCircle / sdBox / smin      the shapes and the smooth join
+//    panelPos / panelOnePixel     where am I in this panel, how big is a pixel
+//    repeatDomain / fitToCell     fold the plane, fit the artwork to a cell
+//    circleField / boxField / sceneField    the two-shape design, scaled
+//    coverage / outlineField / glowFrom / contourRings    the masks
+//    paintLayers                  stack colors using those masks
 //
-//   1. background   bgColor, the ground everything sits on
-//   2. glow         light added around the shape              (add)
-//   3. fill         the shape painted over the glow           (mix, by sign)
-//   4. outline      ink painted over both                     (mix, by band)
-//   5. contours     the field itself, drawn on top            (add)
-//
-// Stacked, with the viewer looking down from the top:
-//
-//        you
-//         |
-//         v
-//     ~~~~~~~~~~~~~~~~~~~~~~~~   5. contours   drawn last, so on top
-//     ========================   4. outline
-//     ########################   3. fill
-//     ::::::::::::::::::::::::   2. glow
-//     ------------------------   1. background  painted first, so underneath
-//
-// Each layer can only cover what is already below it, never what comes after.
-// That is why the glow sits UNDER the fill: the glow is 1.0 everywhere inside
-// the shape, and letting the fill cover it is simpler than masking it out.
-//
-// Each step takes the picture so far and puts something on top of it. Read the
-// mix() arguments off what each mask MEANS and the order writes itself: a mask
-// here is always OUTSIDE-ness, 0 on the thing and 1 away from it, and
-// mix(a, b, t) returns a at t = 0, so the thing being drawn is always the
-// FIRST argument and "the picture so far" is the second.
+// The split between the masks and the painting is the one worth keeping. A
+// mask says WHERE something is; painting says WHAT color goes there and IN
+// WHAT ORDER. Both bugs in exercise 8 were painting bugs wearing a maths
+// costume, so the file keeps them visibly apart.
 //
 // A worked solution is parked at src/_parked/02-shape-sdf-reference/ — it won't
 // appear in the sidebar. Try not to open it until yours runs.
@@ -77,6 +66,8 @@
 vec3 shapeColor = vec3(0.0, 0.0, 0.0);
 vec3 bgColor = vec3(0.05, 0.04, 0.35);
 vec3 outlineColor = vec3(1.0, 1.0, 1.0);
+vec3 borderColor  = vec3(0.35, 0.42, 0.62);   // the panel separator, same as levels 1.1 and 1.2
+vec3 todoColor    = vec3(0.11, 0.10, 0.16);   // an empty panel waiting for its exercise
 
 // * TUNING — every dial in the scene, in one place.
 //
@@ -92,13 +83,24 @@ vec3 outlineColor = vec3(1.0, 1.0, 1.0);
 //   pos units       -1..1 across the short axis of the window
 //   design units    whatever reads nicely for the artwork itself
 //
-const float CELLS_ACROSS   = 3.0;              // count: cells across the short axis
-const float CELL_FILL      = 0.8;              // fraction of a cell the artwork spends
+//   screen pixels   measured in onePixel, independent of zoom
+//   pos units       -1..1 across the short axis of a PANEL
+//   design units    whatever reads nicely for the artwork itself
+//
+// OUTLINE_PIXELS and GLOW_PIXELS were 5 and 16 when the scene filled the
+// whole window. A panel is a quarter of the size, so they are scaled down to
+// keep the same look; they are still in screen pixels, which is the point.
+//
+const float PANELS_ACROSS  = 4.0;              // count
+const float PANELS_DOWN    = 4.0;              // count
+const float BORDER_PIXELS  = 1.0;              // screen pixels: the panel separator
+const float CELLS_ACROSS   = 3.0;              // count: repeat cells across panel 12's short axis
+const float CELL_FILL      = 0.8;              // fraction of a cell (or a panel) the artwork spends
 const vec2  SHAPE_OFFSET   = vec2(0.3, 0.0);   // design units
-const float CIRCLE_RADIUS  = 0.6;              // design units
-const vec2  BOX_HALF_SIZE  = vec2(0.6, 0.4);   // design units
-const float OUTLINE_PIXELS = 5.0;              // screen pixels (half the line width)
-const float GLOW_PIXELS    = 16.0;             // screen pixels
+const float CIRCLE_RADIUS  = 0.6;              // design units (pos units in panels 0 to 3)
+const vec2  BOX_HALF_SIZE  = vec2(0.6, 0.4);   // design units (pos units in panels 0 to 3)
+const float OUTLINE_PIXELS = 2.0;              // screen pixels (half the line width)
+const float GLOW_PIXELS    = 6.0;              // screen pixels
 const float GLOW_INTENSITY = 0.3;              // brightness, unitless
 const float CONTOUR_FREQ   = 10.0;             // 1 / pos units
 const float CONTOUR_AMOUNT = 0.06;             // brightness, unitless
@@ -208,22 +210,34 @@ float smax(float a, float b, float blendWidth) {
   return -smin(-a, -b, blendWidth);
 }
 
-// * NORMALISE by the SHORT axis, so pos always spans -1..1 across it and a
-// radius reads directly as a fraction: radius = 1.0 touches the short edges,
-// 0.6 makes the circle 60% of the short side. Dividing by iResolution.y
-// instead would fit to the height only; min() here is CSS object-fit: contain,
-// and max() would be cover.
-vec2 centredPos(in vec2 fragCoord) {
-  float shortSide = min(iResolution.x, iResolution.y);
-  return (2.0 * fragCoord - iResolution.xy) / shortSide;
+// * WHERE AM I IN THIS PANEL. Centred on the panel, and normalised by the
+// panel's SHORT side, so pos always spans -1..1 across it and a radius reads
+// directly as a fraction: radius = 1.0 touches the short edges, 0.6 makes the
+// circle 60% of the short side. min() here is CSS object-fit: contain, and
+// max() would be cover. Before the gallery this was centredPos(fragCoord),
+// the same sum done for the whole window.
+//
+// tilePixel is one screen pixel in panel units, so 1.0 / tilePixel is the
+// panel's size in pixels. Same short-side trick as the colour wheel in 1.2.
+vec2 panelPos(in vec2 tileUv, in vec2 tilePixel) {
+  vec2 panelSize = 1.0 / tilePixel;                        // the panel, in screen pixels
+  return (2.0 * tileUv - 1.0) * panelSize / min(panelSize.x, panelSize.y);
 }
 
 // * ONE SCREEN PIXEL, measured in pos units. It must use the same divisor as
-// centredPos or every "one pixel wide" thing in the file quietly lies. Kept as
+// panelPos or every "one pixel wide" thing in the file quietly lies. Kept as
 // its own function so that pairing is impossible to break by editing one and
 // not the other.
-float pixelSize() {
-  return 2.0 / min(iResolution.x, iResolution.y);
+float panelOnePixel(in vec2 tilePixel) {
+  vec2 panelSize = 1.0 / tilePixel;
+  return 2.0 / min(panelSize.x, panelSize.y);
+}
+
+// * PANEL BORDER — the thin separator, the same as levels 1.1 and 1.2.
+float panelBorder(in vec2 tileUv, in vec2 tilePixel) {
+  vec2 toEdge = min(tileUv, 1.0 - tileUv) / tilePixel;   // in screen pixels
+  float dist = min(toEdge.x, toEdge.y) - BORDER_PIXELS;
+  return 1.0 - clamp(0.5 + dist, 0.0, 1.0);
 }
 
 // * REPEAT THE DOMAIN. The last of the coordinate tricks, and the same move as
@@ -317,12 +331,14 @@ float fitToCell(in float cellSize) {
                           length(SHAPE_OFFSET + BOX_HALF_SIZE));
   return CELL_FILL * 0.5 * cellSize / designReach;
 }
-
-// * THE SCENE FIELD — two shapes in, ONE distance out. Everything downstream
-// reads only the number this returns, which is why adding a shape or changing
-// how they combine stays local to this function.
 //
-// * SCALING AN SDF: divide the position going in, multiply the distance coming
+// The panels reuse it with a cellSize of 2.0: a whole panel is one big cell,
+// 2.0 pos units across its short side, so fitToCell(2.0) is the scale that
+// fits the two-shape design into a panel with the same gutter as a cell.
+
+// * THE TWO-SHAPE DESIGN — the circle and the box every combining panel uses.
+//
+// SCALING AN SDF: divide the position going in, multiply the distance coming
 // out.
 //
 //    d = sdShape(pos / s, params) * s
@@ -338,128 +354,47 @@ float fitToCell(in float cellSize) {
 // "where am I relative to the circle's centre", which is pos - centre. Hence
 // MINUS to move right and PLUS to move left; one offset used both ways pushes
 // the pair apart symmetrically.
-float sceneField(in vec2 cellPos, in float shapeScale) {
-  vec2 scaledPos = cellPos / shapeScale;
+float circleField(in vec2 pos, in float shapeScale) {
+  return sdCircle(pos / shapeScale - SHAPE_OFFSET, CIRCLE_RADIUS) * shapeScale;
+}
+float boxField(in vec2 pos, in float shapeScale) {
+  return sdBox(pos / shapeScale + SHAPE_OFFSET, BOX_HALF_SIZE) * shapeScale;
+}
 
-  float circleDist = sdCircle(scaledPos - SHAPE_OFFSET, CIRCLE_RADIUS) * shapeScale;
-  float boxDist    = sdBox(scaledPos + SHAPE_OFFSET, BOX_HALF_SIZE)   * shapeScale;
-
-  // * COMBINE. Only one line changes between the three booleans; both fields
-  // above stay exactly as they are. Only ONE `float distToEdge = ...` may be
-  // uncommented at a time — two is a redefinition error, not a picture. That
-  // error is deliberate protection: keeping these as assignments rather than
-  // early returns means the compiler catches a double-uncomment instead of
-  // silently ignoring the second one as unreachable code.
-  //
-  //   union         min(a, b)    inside EITHER — the nearer surface wins
-  //   intersection  max(a, b)    inside BOTH   — the binding constraint wins
-  //   subtraction   max(a, -b)   inside a, outside b — negating b turns its
-  //                              inside into outside, then intersect with that
-  //
-  // Neither is a convention to memorise. distToEdge answers "how far to the
-  // nearest surface". For a UNION the nearest surface is whichever is closer,
-  // so the answer is the smaller number — min(). For an INTERSECTION you have
-  // to be inside both, and inside means negative, so the one that decides the
-  // answer is the LARGER (least negative) of the two — max(). Same question,
-  // run the other way round: union asks "nearest", intersection asks "worst".
-
-  // float distToEdge = min(circleDist, boxDist);   // union
-
-  // * INTERSECTION — the overlap only, so SHAPE_OFFSET now does double duty: it
-  // places the shapes AND decides how much of them survives. At 0.3 you get a
-  // rounded slab: the box's straight right edge, the circle's arc bulging out to
-  // the left, and the box's flat top and bottom in between. Every stretch of
-  // that outline belongs to whichever shape was the binding constraint there —
-  // max() choosing, made visible.
-  //
-  // Push the offset far enough apart and the intersection becomes EMPTY: no
-  // pixel is inside both, distToEdge is positive everywhere, and you get a
-  // blank background. That's a correct answer, not a bug — worth doing once so
-  // a blank screen doesn't read as breakage later.
-
-  // float distToEdge = max(circleDist, boxDist);
-
-  // * SUBTRACTION — a minus b, and it is intersection wearing a disguise.
-  //
-  // Negating a distance field turns the shape inside out. The boundary itself
-  // doesn't move (it's where the value is 0, and -0 is still 0); only the SIGN
-  // flips, so what was inside reads as outside. -boxDist therefore describes
-  // "everywhere except the box", with the box's own outline as its edge.
-  //
-  // Intersect a shape with that and you get "inside a, but outside b" — which
-  // is subtraction. Same max() as intersection, one sign flipped; there are
-  // really only two operators here, not three.
-  //
-  // The argument you DON'T negate is the one that survives. The negated one
-  // becomes the cutter, and the cut always carries the cutter's own edges,
-  // which is how you can read the result back:
-  //
-  //   max(circleDist, -boxDist)   circle survives, box cuts
-  //                               -> a disc with a square notch bitten out of
-  //                                  its left side; straight cut edges
-  //   max(-circleDist, boxDist)   box survives, circle cuts
-  //                               -> a slab with a round bite out of its right
-  //                                  side; curved cut edge
-  //
-  // Both were tried. The straight-vs-curved cut is the tell for which shape did
-  // the cutting.
-
-  // float distToEdge = max(circleDist, -boxDist);
-  // float distToEdge = max(-circleDist, boxDist);
-
-  // * MORPH — not a boolean, but worth knowing, and worth keeping around.
-  // mix() AVERAGES the two fields instead of choosing between them, so it
-  // MORPHS one shape into the other rather than combining them — the result is
-  // part circle, part box, sitting between the two positions. Animate the t and
-  // the circle flows into the box.
-  //
-  // Averaging two distance fields keeps the result well behaved enough to draw
-  // (neither field changes faster than 1 unit per unit of space, so the average
-  // doesn't either), which is why it looks plausible rather than broken.
-
-  // float distToEdge = mix(circleDist, boxDist, 0.5);
-  // float distToEdge = mix(circleDist, boxDist, 0.5 + 0.5 * sin(iTime));
-
-  // Worth looking at the contour rings wherever two shapes meet under any of
-  // the hard operators above. The value is continuous across the join but its
-  // SLOPE is not: the rings arrive as a V rather than a smooth curve, because
-  // min()/max() switch abruptly from one field to the other. That crease is
-  // what the smooth minimum below rounds off — and it is also why max() is only
-  // a distance BOUND near the join, not a true distance.
-
-  // * SOFTEN THE JOIN — a union whose seam is filleted rather than creased,
-  // and the one that is live.
-  //
-  // blendWidth is not a centre, it is the WIDTH of the blend band. It is a
-  // distance, so it has to live in the SAME space as the fields it is
-  // comparing — pos units, not design units. That is the whole job of the
-  // `* shapeScale`.
-  //
-  // The animated 0..1 factor is therefore read in DESIGN units: at 0 you get
-  // plain min() and the hard corner back; by 0.35 the join has a visible
-  // fillet; past about 0.6 the two shapes read as one blob. Drop the
-  // `* shapeScale` and blendWidth becomes several times the size of the whole
-  // shape, so smin never leaves the blob regime.
-  //
-  // Blending also GROWS the shape: smin pushes the surface out by up to
-  // blendWidth/4 beyond where min() would put it, which eats into the cell
-  // gutter. That bound is pessimistic — it only binds if the join sits on the
-  // outer boundary, and here it sits in the middle of the blob. Measured, the
-  // farthest reach grows about 3% at the peak of the cycle, which CELL_FILL =
-  // 0.8 absorbs without the copies ever touching.
-  //
-  // Animating it is the point — the shapes melt together and separate again,
-  // and nothing about either shape changes, only how their fields are joined.
-  //
-  // One edge to know about: this reaches exactly 0.0 once per cycle, and a
-  // blendWidth of 0 divides by zero inside smin. GLSL gives infinity rather
-  // than crashing, the clamp swallows it, and the result degrades to plain
-  // min() — so it looks fine. If it ever needs to be airtight, floor it:
-  // max(blendWidth, 1e-4).
+// * THE SCENE FIELD — the smooth union, animated: the design panels 9 to 12
+// draw. Two shapes in, ONE distance out; everything downstream reads only
+// the number this returns.
+//
+//
+// blendWidth is not a centre, it is the WIDTH of the blend band. It is a
+// distance, so it has to live in the SAME space as the fields it is
+// comparing — pos units, not design units. That is the whole job of the
+// `* shapeScale`.
+//
+// The animated 0..1 factor is therefore read in DESIGN units: at 0 you get
+// plain min() and the hard corner back; by 0.35 the join has a visible
+// fillet; past about 0.6 the two shapes read as one blob. Drop the
+// `* shapeScale` and blendWidth becomes several times the size of the whole
+// shape, so smin never leaves the blob regime.
+//
+// Blending also GROWS the shape: smin pushes the surface out by up to
+// blendWidth/4 beyond where min() would put it, which eats into the cell
+// gutter. That bound is pessimistic — it only binds if the join sits on the
+// outer boundary, and here it sits in the middle of the blob. Measured, the
+// farthest reach grows about 3% at the peak of the cycle, which CELL_FILL =
+// 0.8 absorbs without the copies ever touching.
+//
+// Animating it is the point — the shapes melt together and separate again,
+// and nothing about either shape changes, only how their fields are joined.
+//
+// One edge to know about: this reaches exactly 0.0 once per cycle, and a
+// blendWidth of 0 divides by zero inside smin. GLSL gives infinity rather
+// than crashing, the clamp swallows it, and the result degrades to plain
+// min() — so it looks fine. If it ever needs to be airtight, floor it:
+// max(blendWidth, 1e-4).
+float sceneField(in vec2 pos, in float shapeScale) {
   float blendWidth = (0.5 + 0.5 * sin(iTime)) * shapeScale;
-  float distToEdge = smin(circleDist, boxDist, blendWidth);
-
-  return distToEdge;
+  return smin(circleField(pos, shapeScale), boxField(pos, shapeScale), blendWidth);
 }
 
 // * COVERAGE — turn any distance field into a mask, with one pixel of
@@ -483,7 +418,7 @@ float sceneField(in vec2 cellPos, in float shapeScale) {
 //   smoothstep(-onePixel, onePixel, dist)  centred, but two pixels wide
 //   clamp(0.5 + dist / onePixel, 0., 1.)   one pixel, centred, and exact
 //
-// The 0.5 is what centres it, and exercise 2 at the bottom of the file has the
+// The 0.5 is what centres it, and panel 1's comment has the
 // derivation: it IS the coverage of a straight edge, not an approximation that
 // happens to look right.
 float coverage(in float dist, in float onePixel) {
@@ -602,7 +537,36 @@ float contourRings(in float dist) {
   return CONTOUR_AMOUNT * cos(dist * CONTOUR_FREQ);
 }
 
-// * PAINT — masks first, then layers, back to front. Nothing here MEASURES
+// * PAINT — masks first, then layers, back to front. Used whole by panel 12.
+//
+//
+//   1. background   bgColor, the ground everything sits on
+//   2. glow         light added around the shape              (add)
+//   3. fill         the shape painted over the glow           (mix, by sign)
+//   4. outline      ink painted over both                     (mix, by band)
+//   5. contours     the field itself, drawn on top            (add)
+//
+// Stacked, with the viewer looking down from the top:
+//
+//        you
+//         |
+//         v
+//     ~~~~~~~~~~~~~~~~~~~~~~~~   5. contours   drawn last, so on top
+//     ========================   4. outline
+//     ########################   3. fill
+//     ::::::::::::::::::::::::   2. glow
+//     ------------------------   1. background  painted first, so underneath
+//
+// Each layer can only cover what is already below it, never what comes after.
+// That is why the glow sits UNDER the fill: the glow is 1.0 everywhere inside
+// the shape, and letting the fill cover it is simpler than masking it out.
+//
+// Each step takes the picture so far and puts something on top of it. Read the
+// mix() arguments off what each mask MEANS and the order writes itself: a mask
+// here is always OUTSIDE-ness, 0 on the thing and 1 away from it, and
+// mix(a, b, t) returns a at t = 0, so the thing being drawn is always the
+// FIRST argument and "the picture so far" is the second.
+//
 // anything; every line is built out of the one distance handed in.
 vec3 paintLayers(in float distToEdge, in float onePixel) {
   float fillMask = coverage(distToEdge, onePixel);
@@ -647,268 +611,518 @@ vec3 paintLayers(in float distToEdge, in float onePixel) {
   return color;
 }
 
-// * THE PIPELINE. Six lines, each one a question: where am I, how big is a
-// pixel, which cell am I in, how much room does the artwork get, how far am I
-// from the nearest edge, and what color is that.
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-  vec2  pos      = centredPos(fragCoord);
-  float onePixel = pixelSize();
+// * SMALL PAINTERS shared by the panels. Each takes a distance and returns a
+// colour, so a panel is "build a field, then paint it".
+//
+// paintFill is exercise 2's line: shapeColor on the inside, bgColor outside,
+// one pixel of anti-aliased edge between. paintFillAndRings adds exercise 3's
+// contours on top, so every combining panel also shows its field.
+vec3 paintFill(in float dist, in float onePixel) {
+  return mix(shapeColor, bgColor, coverage(dist, onePixel));
+}
+vec3 paintFillAndRings(in float dist, in float onePixel) {
+  return paintFill(dist, onePixel) + contourRings(dist);
+}
+
+// The border goes on last, over everything, in every panel.
+vec3 finishPanel(in vec3 color, in vec2 tileUv, in vec2 tilePixel) {
+  return mix(color, borderColor, panelBorder(tileUv, tilePixel));
+}
+
+// * PANEL 0 — THE FIELD ITSELF (exercise 1).
+//
+// length(pos) is distance from the centre; subtracting a radius gives the
+// signed distance to the circle's edge. The move that mattered: put the
+// subtraction in the distance, not in the colour.
+//
+// Drawn raw, as grey: 0.5 + 0.5 * dist, so the edge is mid grey, the inside
+// darker (negative) and the outside lighter (positive). Dark = negative =
+// inside, the reading every later panel keeps.
+vec3 panelField(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos  = panelPos(tileUv, tilePixel);
+  float dist = sdCircle(pos, CIRCLE_RADIUS);
+  return finishPanel(vec3(0.5 + 0.5 * dist), tileUv, tilePixel);
+}
+
+// * PANEL 1 — TURN THE SIGN INTO A MASK (exercise 2).
+//
+// step() first, to see the staircase that comes of every pixel being fully
+// in or fully out, then a ramp about a pixel wide to soften it.
+//
+// WHERE THE 0.5 COMES FROM. Work in pixels: let t = distToEdge / onePixel,
+// the signed distance measured in screen pixels. A pixel is SAMPLED at its
+// centre but COVERS the range t-0.5 .. t+0.5, so for a straight edge the
+// fraction of the pixel lying outside the shape is
+//
+//     t <= -0.5    pixel wholly inside    -> 0
+//     t >= +0.5    pixel wholly outside   -> 1
+//     in between   -> t + 0.5             (a straight line between the two)
+//
+// Read that back as an expression and it is exactly
+//   clamp(0.5 + distToEdge / onePixel, 0.0, 1.0)
+// a ramp one pixel wide, centred on the edge. Not an approximation that
+// happens to look right: it IS the coverage of a straight edge, and the best
+// a single sample per pixel can do. It's also cheaper than smoothstep.
+//
+// Both ways of getting it wrong are about where the ramp SITS, not how wide
+// it is. Measured on the pixel that should read fully outside (255):
+//   clamp(distToEdge / onePixel, ...)
+//       ramp 0..1px, half a pixel outward. Gives 0 at the true edge where
+//       0.5 is honest, and 128/255 here. Half a pixel of fat on every shape.
+//   1.0 - smoothstep(0.0, 2*onePixel, distToEdge)
+//       ramp entirely outside the shape: a full pixel of fat.
+// smoothstep(-onePixel, onePixel, distToEdge) is centred, so unbiased, but
+// spans two pixels rather than one — that extra pixel is why its edges look
+// slightly softer.
+//
+// Done: greyscale became a two-color palette with
+//   vec3 color = mix(shapeColor, bgColor, outsideMask);
+// shapeColor first, because outsideMask is outside-ness. Keeping the shape
+// dark preserves the "dark = negative = inside" reading the greyscale had, so the
+// picture is still a view of the field rather than just a picture of a disc.
+vec3 panelMask(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos      = panelPos(tileUv, tilePixel);
+  float onePixel = panelOnePixel(tilePixel);
+  float dist     = sdCircle(pos, CIRCLE_RADIUS);
+  return finishPanel(paintFill(dist, onePixel), tileUv, tilePixel);
+}
+
+// * PANEL 2 — SEE THE FIELD (exercise 3).
+//
+// `color += 0.06 * cos(distToEdge * 10.0);` turns the invisible field into
+// contour rings. Worth having done: from here on you are reasoning about a landscape
+// you can't otherwise see, and around a box those contours show you the
+// rounded corners the distance function produces.
+//
+// The details of the rings, and the seams they reveal once the domain is
+// repeated, are written up at contourRings above.
+vec3 panelContours(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos      = panelPos(tileUv, tilePixel);
+  float onePixel = panelOnePixel(tilePixel);
+  float dist     = sdCircle(pos, CIRCLE_RADIUS);
+  return finishPanel(paintFillAndRings(dist, onePixel), tileUv, tilePixel);
+}
+
+// * PANEL 3 — A SECOND SHAPE, THE BOX (exercise 4).
+//
+// Written out step by step in sdBox above: fold, overshoot, outside term,
+// inside term. The gotcha that cost time was not the maths but the argument:
+// `halfSize` is measured from the centre out, so vec2(2.0) reaches far past
+// the screen edge (pos only reaches 1.0 on the short axis), every pixel reads
+// as inside, and you get a flat fill with no visible box at all.
+//
+// The rings show the field is NOT box-shaped outside the corners: they
+// round off, because past a corner the nearest point of the box IS the
+// corner. sdBox above explains why.
+vec3 panelBox(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos      = panelPos(tileUv, tilePixel);
+  float onePixel = panelOnePixel(tilePixel);
+  float dist     = sdBox(pos, BOX_HALF_SIZE);
+  return finishPanel(paintFillAndRings(dist, onePixel), tileUv, tilePixel);
+}
+
+// * PANEL 4 — UNION (exercise 5).
+//
+// Panels 4 to 7 put the same two fields through one combining operator
+// each; only the one line that joins them changes.
+//
+//   union         min(a, b)    inside EITHER — the nearer surface wins
+//   intersection  max(a, b)    inside BOTH   — the binding constraint wins
+//   subtraction   max(a, -b)   inside a, outside b — negating b turns its
+//                              inside into outside, then intersect with that
+//
+// Neither is a convention to memorise. distToEdge answers "how far to the
+// nearest surface". For a UNION the nearest surface is whichever is closer,
+// so the answer is the smaller number — min(). For an INTERSECTION you have
+// to be inside both, and inside means negative, so the one that decides the
+// answer is the LARGER (least negative) of the two — max(). Same question,
+// run the other way round: union asks "nearest", intersection asks "worst".
+//
+// Both shapes live at once, each measured in its own frame. One SHAPE_OFFSET
+// used as pos - offset for the circle and pos + offset for the box pushes
+// them apart symmetrically — nicer than carrying two separate centres.
+//
+// Offsetting works by subtracting from pos first, because the shape function
+// only knows the origin: sdCircle(pos - centre, radius) hands it "where am I
+// relative to the circle's centre". MINUS to move in the PLUS direction —
+// you're moving the coordinate system, not the shape.
+vec3 panelUnion(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos        = panelPos(tileUv, tilePixel);
+  float onePixel   = panelOnePixel(tilePixel);
+  float shapeScale = fitToCell(2.0);            // the panel as one big cell
+  float circleDist = circleField(pos, shapeScale);
+  float boxDist    = boxField(pos, shapeScale);
+  float dist       = min(circleDist, boxDist);
+  return finishPanel(paintFillAndRings(dist, onePixel), tileUv, tilePixel);
+}
+
+// * PANEL 5 — INTERSECTION.
+//
+// INTERSECTION — the overlap only, so SHAPE_OFFSET now does double duty: it
+// places the shapes AND decides how much of them survives. At 0.3 you get a
+// rounded slab: the box's straight right edge, the circle's arc bulging out to
+// the left, and the box's flat top and bottom in between. Every stretch of
+// that outline belongs to whichever shape was the binding constraint there —
+// max() choosing, made visible.
+//
+// Push the offset far enough apart and the intersection becomes EMPTY: no
+// pixel is inside both, distToEdge is positive everywhere, and you get a
+// blank background. That's a correct answer, not a bug — worth doing once so
+// a blank screen doesn't read as breakage later.
+//
+// Honesty note for exercise 6: min() gives a true distance outside the
+// shapes, but the max()-based operators only give a bound near the join —
+// fine while you're thresholding it into a mask, but it matters the moment
+// you use the field for a glow.
+vec3 panelIntersection(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos        = panelPos(tileUv, tilePixel);
+  float onePixel   = panelOnePixel(tilePixel);
+  float shapeScale = fitToCell(2.0);            // the panel as one big cell
+  float circleDist = circleField(pos, shapeScale);
+  float boxDist    = boxField(pos, shapeScale);
+  float dist       = max(circleDist, boxDist);
+  return finishPanel(paintFillAndRings(dist, onePixel), tileUv, tilePixel);
+}
+
+// * PANEL 6 — SUBTRACTION, CIRCLE MINUS BOX.
+//
+// SUBTRACTION — a minus b, and it is intersection wearing a disguise.
+//
+// Negating a distance field turns the shape inside out. The boundary itself
+// doesn't move (it's where the value is 0, and -0 is still 0); only the SIGN
+// flips, so what was inside reads as outside. -boxDist therefore describes
+// "everywhere except the box", with the box's own outline as its edge.
+//
+// Intersect a shape with that and you get "inside a, but outside b" — which
+// is subtraction. Same max() as intersection, one sign flipped; there are
+// really only two operators here, not three.
+//
+// The argument you DON'T negate is the one that survives. The negated one
+// becomes the cutter, and the cut always carries the cutter's own edges,
+// which is how you can read the result back:
+//
+//   max(circleDist, -boxDist)   circle survives, box cuts
+//                               -> a disc with a square notch bitten out of
+//                                  its left side; straight cut edges
+//   max(-circleDist, boxDist)   box survives, circle cuts
+//                               -> a slab with a round bite out of its right
+//                                  side; curved cut edge
+//
+// Both were tried. The straight-vs-curved cut is the tell for which shape did
+// the cutting.
+vec3 panelCircleMinusBox(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos        = panelPos(tileUv, tilePixel);
+  float onePixel   = panelOnePixel(tilePixel);
+  float shapeScale = fitToCell(2.0);            // the panel as one big cell
+  float circleDist = circleField(pos, shapeScale);
+  float boxDist    = boxField(pos, shapeScale);
+  float dist       = max(circleDist, -boxDist);   // circle survives, box cuts
+  return finishPanel(paintFillAndRings(dist, onePixel), tileUv, tilePixel);
+}
+
+// * PANEL 7 — SUBTRACTION, BOX MINUS CIRCLE.
+//
+// The other order, so the two can be read side by side: here the box
+// survives and the circle cuts, so the bite is ROUND, carrying the cutter's
+// edge. Panel 6's comment has the full story.
+vec3 panelBoxMinusCircle(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos        = panelPos(tileUv, tilePixel);
+  float onePixel   = panelOnePixel(tilePixel);
+  float shapeScale = fitToCell(2.0);            // the panel as one big cell
+  float circleDist = circleField(pos, shapeScale);
+  float boxDist    = boxField(pos, shapeScale);
+  float dist       = max(-circleDist, boxDist);   // box survives, circle cuts
+  return finishPanel(paintFillAndRings(dist, onePixel), tileUv, tilePixel);
+}
+
+// * PANEL 8 — MORPH, animated.
+//
+// MORPH — not a boolean, but worth knowing, and worth keeping around.
+// mix() AVERAGES the two fields instead of choosing between them, so it
+// MORPHS one shape into the other rather than combining them — the result is
+// part circle, part box, sitting between the two positions. Animate the t and
+// the circle flows into the box.
+//
+// Averaging two distance fields keeps the result well behaved enough to draw
+// (neither field changes faster than 1 unit per unit of space, so the average
+// doesn't either), which is why it looks plausible rather than broken.
+//
+// Detour worth recording: mix(a, b, 0.5) was tried here for intersection and
+// is NOT one. It averages the fields rather than choosing between them, so
+// it morphs the two shapes into a hybrid instead of intersecting them. A
+// good accident — animate the t and you have shape tweening, which no
+// boolean gives you.
+vec3 panelMorph(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos        = panelPos(tileUv, tilePixel);
+  float onePixel   = panelOnePixel(tilePixel);
+  float shapeScale = fitToCell(2.0);            // the panel as one big cell
+  float circleDist = circleField(pos, shapeScale);
+  float boxDist    = boxField(pos, shapeScale);
+  float dist       = mix(circleDist, boxDist, 0.5 + 0.5 * sin(iTime));
+  return finishPanel(paintFillAndRings(dist, onePixel), tileUv, tilePixel);
+}
+
+// * PANEL 9 — SMOOTH UNION, animated (exercise 6).
+//
+// Worth looking at the contour rings wherever two shapes meet under any of
+// the hard operators above. The value is continuous across the join but its
+// SLOPE is not: the rings arrive as a V rather than a smooth curve, because
+// min()/max() switch abruptly from one field to the other. That crease is
+// what the smooth minimum below rounds off — and it is also why max() is only
+// a distance BOUND near the join, not a true distance.
+//
+// This panel is the fix: sceneField above joins the two with smin, and the
+// blend width breathes with time, so the hard crease of panel 4 appears and
+// melts away once per cycle. The derivation is above smin, and what the
+// blend width means is above sceneField.
+vec3 panelSmoothUnion(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos        = panelPos(tileUv, tilePixel);
+  float onePixel   = panelOnePixel(tilePixel);
+  float dist       = sceneField(pos, fitToCell(2.0));
+  return finishPanel(paintFillAndRings(dist, onePixel), tileUv, tilePixel);
+}
+
+// * PANEL 10 — OUTLINE (exercise 8a).
+//
+// abs(distToEdge) - thickness, through the same clamp ramp as the fill.
+// An outline is just a shape whose SDF is built out of another shape's
+// SDF, and abs() on the field is the same fold as abs() on the position
+// back in sdBox.
+//
+// The part that was actually new: building the field and COMPOSING it
+// into the picture are two separate decisions, and only the first one is
+// maths. The field came out right first try; the compose line then said
+// "erase everything off the band" rather than "paint ink on the band",
+// which produces a correct-looking outline for the wrong reason and
+// quietly costs you the choice of ink color and the option of keeping the
+// fill. Fixed by swapping the mix() arguments and giving the ink its own
+// palette entry; the erase version is kept commented beside it, because
+// comparing the two is the lesson.
+//
+// The reusable habit: read mix()'s argument order off what the mask
+// MEANS. Both masks in this file are outside-ness, so in both cases the
+// thing being drawn goes first. Getting a plausible picture is not
+// evidence that the reasoning was right.
+//
+// Also worth having hit: thickness is a distance, so it has a space, and
+// screen space and design space behave differently the moment CELLS_ACROSS
+// changes.
+vec3 panelOutline(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos      = panelPos(tileUv, tilePixel);
+  float onePixel = panelOnePixel(tilePixel);
+  float dist     = sceneField(pos, fitToCell(2.0));
+  float inkMask  = coverage(outlineField(dist, onePixel), onePixel);
+
+  vec3 color = paintFill(dist, onePixel);         // the shape on the background
+  color = mix(outlineColor, color, inkMask);      // ink painted over it
+  return finishPanel(color, tileUv, tilePixel);
+}
+
+// * PANEL 11 — GLOW (exercise 8b).
+//
+// exp(-falloff * max(distToEdge, 0.0)), added rather than mixed so it
+// reads as light. exp() is the fade; the clamp keeps the inside from
+// exploding.
+//
+// The thing worth remembering is about UNITS, not about glows.
+// The falloff is one over a distance, so a raw number is meaningless
+// until you say what distance you mean. Written as
+// 1.0 / (GLOW_PIXELS * onePixel) it becomes "fade over this many screen
+// pixels", which is both readable and resolution-independent. The first
+// attempt, 0.01 / onePixel, is the SAME formula asking for 100 pixels of
+// fade in a gap only about 26 pixels wide — right idea, no room. When a
+// falloff looks like it does nothing, check the space it has to work in
+// before changing the formula.
+//
+// Second thing, and it cost a grey fill to notice: the clamp makes glow
+// equal 1 across the whole interior, so adding it after the fill lifted
+// the shape's color to GLOW_INTENSITY — a measured 0.300 where 0.000 was
+// meant. Fixed by painting the glow onto the background BEFORE the fill
+// and letting the fill cover what wasn't wanted. Ordering the layers is
+// part of the design, not an afterthought, which is why paintLayers now
+// separates computing the masks from painting them.
+vec3 panelGlow(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos      = panelPos(tileUv, tilePixel);
+  float onePixel = panelOnePixel(tilePixel);
+  float dist     = sceneField(pos, fitToCell(2.0));
+
+  vec3 color = bgColor;
+  color += glowFrom(dist, onePixel) * outlineColor * GLOW_INTENSITY;   // light first
+  color  = mix(shapeColor, color, coverage(dist, onePixel));           // fill covers it
+  return finishPanel(color, tileUv, tilePixel);
+}
+
+// * PANEL 12 — REPEAT IT, AND EVERYTHING TOGETHER (exercise 7).
+//
+// The picture this scene used to be, whole: the domain folded into
+// CELLS_ACROSS cells, the design fitted to each cell, the smooth union, and
+// all the layers of paintLayers (glow, fill, outline, contours) at once.
+//
+// cellPos = pos - cellSize * floor(pos / cellSize + 0.5), then compute the
+// shapes on cellPos. One fold turns one pair of shapes into a whole grid at
+// no extra cost per pixel.
+//
+// What actually cost time was not the repeat line, which worked first try.
+// Repetition WRAPS the coordinate; it does not scale anything. The shape
+// constants still meant what they always meant, they were just now being
+// measured against a cell instead of the screen — reach 0.9 into a budget of
+// 0.35 — so every pixel landed inside something and the screen went solid.
+// A correct picture of the wrong request.
+//
+// The fix was to stop writing the constants twice. designReach measures what
+// the design asks for, fill says how much of the cell to spend, and
+// shapeScale is the ratio; the shapes are then drawn with the scaling idiom
+// sdShape(pos / s) * s. Now CELLS_ACROSS is a zoom control that cannot break
+// the layout, which is the property to aim for whenever one number is
+// derived from another.
+//
+// Two smaller things worth keeping:
+//   - count cells, don't measure them. pos is 2.0 wide, so cellSize = 0.5 is
+//     a quarter of the short side, not a half. CELLS_ACROSS says what it
+//     means, and odd values end flush against the screen edge because
+//     boundaries land at (k + 0.5) * cellSize.
+//   - the result is not a true distance any more. Each pixel only knows its
+//     own cell. Fine for a mask, visible in the contours at every seam, and
+//     it would break a glow or a raymarch.
+//
+// THEN the point of putting these after exercise 7: the glow draws hard
+// seams along every cell boundary. That is not a bug in the glow, it is the
+// repetition caveat cashing out. A mask only looks at the sign right next to
+// the shape; a glow looks at the value far from it, out where the field is
+// lying about which copy is nearest. The contour rings were already telling
+// you this quietly. Two honest responses: lower fill so the glow has decayed
+// to nothing before it reaches the wall, or raise the falloff. Neither is a
+// fix, they just keep the lie below the noise floor. Worth knowing which one
+// you are doing.
+vec3 panelEverything(in vec2 tileUv, in vec2 tilePixel) {
+  vec2  pos        = panelPos(tileUv, tilePixel);
+  float onePixel   = panelOnePixel(tilePixel);
 
   float cellSize   = 2.0 / CELLS_ACROSS;
   vec2  cellPos    = repeatDomain(pos, cellSize);
   float shapeScale = fitToCell(cellSize);
-
   float distToEdge = sceneField(cellPos, shapeScale);
 
-  fragColor = vec4(paintLayers(distToEdge, onePixel), 1.0);
+  return finishPanel(paintLayers(distToEdge, onePixel), tileUv, tilePixel);
 }
 
-// * EXERCISES — roughly in order. Each builds on the last.
-// ---------------------------------------------------------------------------
+// * PANEL 13 — GIVE EACH CELL AN IDENTITY (exercise 9).  [your turn]
 //
-// 1. MAKE IT A CIRCLE.  [done]
-//    `length(pos)` is distance from the centre; subtracting a radius gives the
-//    signed distance to the circle's edge. The move that mattered: put the
-//    subtraction in `distToEdge`, not in the color.
+// Start from a copy of panel 12.
 //
-// 2. TURN THE SIGN INTO A MASK.  [done]
-//    step() first, to see the staircase that comes of every pixel being fully
-//    in or fully out, then a ramp about a pixel wide to soften it.
+// Right now every cell is identical, which is the giveaway that it is a
+// tiling rather than a drawing. The fix is already sitting inside the repeat
+// line: floor(pos / cellSize + 0.5) IS the integer coordinate of the cell,
+// so pull it out into a `cellId` and you have a per-cell value for free.
 //
-//    WHERE THE 0.5 COMES FROM. Work in pixels: let t = distToEdge / onePixel,
-//    the signed distance measured in screen pixels. A pixel is SAMPLED at its
-//    centre but COVERS the range t-0.5 .. t+0.5, so for a straight edge the
-//    fraction of the pixel lying outside the shape is
+// Turn it into a number to vary things with:
+//   float rnd = fract(sin(dot(cellId, vec2(127.1, 311.7))) * 43758.5453);
+// Not real randomness — a hash. Same cell, same value, every frame, which is
+// what you want; a per-cell rand() that flickered would be useless.
 //
-//        t <= -0.5    pixel wholly inside    -> 0
-//        t >= +0.5    pixel wholly outside   -> 1
-//        in between   -> t + 0.5             (a straight line between the two)
+// Then spend it. Easiest first: offset the blend phase per cell so the
+// shapes melt out of step with each other (rnd * 6.283 added inside the
+// sin in sceneField, which means giving sceneField a phase parameter).
+// Then rotation, which needs a 2x2:
+//   float a = rnd * 6.283;
+//   mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
+// and rotate cellPos before handing it to sceneField. That second half is
+// really the first step of transforms, panel 15's subject.
 //
-//    Read that back as an expression and it is exactly
-//      clamp(0.5 + distToEdge / onePixel, 0.0, 1.0)
-//    a ramp one pixel wide, centred on the edge. Not an approximation that
-//    happens to look right: it IS the coverage of a straight edge, and the best
-//    a single sample per pixel can do. It's also cheaper than smoothstep.
+// Two things to notice when you do. A rotation is orthonormal, so it does
+// not change distances: unlike shapeScale, there is nothing to multiply back
+// on the way out. And rotating cannot break the packing, because designReach
+// is a bounding CIRCLE and a circle is the one bound rotation leaves alone.
+// That was luck at the time; it is a reason now.
+vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
+  return finishPanel(todoColor, tileUv, tilePixel);
+}
+
+// * PANEL 14 — DROP SHADOW (exercise 10).  [your turn]
 //
-//    Both ways of getting it wrong are about where the ramp SITS, not how wide
-//    it is. Measured on the pixel that should read fully outside (255):
-//      clamp(distToEdge / onePixel, ...)
-//          ramp 0..1px, half a pixel outward. Gives 0 at the true edge where
-//          0.5 is honest, and 128/255 here. Half a pixel of fat on every shape.
-//      1.0 - smoothstep(0.0, 2*onePixel, distToEdge)
-//          ramp entirely outside the shape: a full pixel of fat.
-//    smoothstep(-onePixel, onePixel, distToEdge) is centred, so unbiased, but
-//    spans two pixels rather than one — that extra pixel is why its edges look
-//    slightly softer.
+// Start from a copy of panel 11, the glow: a shadow is its dark, offset
+// twin.
 //
-//    Done: greyscale became a two-color palette with
-//      vec3 color = mix(shapeColor, bgColor, outsideMask);
-//    shapeColor first, because outsideMask is outside-ness. Keeping the shape
-//    dark preserves the "dark = negative = inside" reading the greyscale had, so the
-//    picture is still a view of the field rather than just a picture of a disc.
+// A shadow is the glow with three deliberate changes: it is DARK instead of
+// light, it is OFFSET instead of centred, and it goes UNDERNEATH instead of
+// on top. Dark and underneath are easy. The offset is the interesting part.
 //
-// 3. SEE THE FIELD ITSELF.  [done]
-//    `color += 0.06 * cos(distToEdge * 10.0);` turns the invisible field into
-//    contour rings. Worth having done: from here on you are reasoning about a landscape
-//    you can't otherwise see, and around a box those contours show you the
-//    rounded corners the distance function produces.
+// distToEdge says how far you are from the edge but not WHICH WAY, so there
+// is no way to nudge a glow sideways by editing that number. Direction has
+// to come from asking the question from somewhere else — the same move as
+// SHAPE_OFFSET. Measure the field at a shifted position:
 //
-// 4. ADD A SECOND SHAPE — A BOX.  [done]
-//    Written out step by step in sdBox above: fold, overshoot, outside term,
-//    inside term. The gotcha that cost time was not the maths but the argument:
-//    `halfSize` is measured from the centre out, so vec2(2.0) reaches far past
-//    the screen edge (pos only reaches 1.0 on the short axis), every pixel reads
-//    as inside, and you get a flat fill with no visible box at all.
+//   vec2  shadowOffset  = vec2(10.0, -10.0) * onePixel;  // right and DOWN
+//   float shadowPixels  = 8.0;
+//   float shadowFalloff = 1.0 / (shadowPixels * onePixel);
+//   float shadowDist    = sceneField(pos - shadowOffset, shapeScale);
+//   float shadow = exp(-shadowFalloff * max(shadowDist, 0.0));
 //
-// 5. COMBINE THEM.  [done]
-//    Both shapes live at once, each measured in its own frame. One shapeOffset
-//    used as pos - offset for the circle and pos + offset for the box pushes
-//    them apart symmetrically — nicer than carrying two separate centres.
+// (Before the gallery this needed the circle, the box and smin written out
+// a second time. sceneField now wraps all three, so the second question is
+// one call with a shifted position.)
 //
-//    Detour worth recording: mix(a, b, 0.5) was tried here for intersection and
-//    is NOT one. It averages the fields rather than choosing between them, so
-//    it morphs the two shapes into a hybrid instead of intersecting them. A
-//    good accident — animate the t and you have shape tweening, which no
-//    boolean gives you.
+// Minus to move plus, as always. y is up in this space, so a negative y
+// throws the shadow downward.
 //
-//    Subtraction done too, both orders. Negating a field flips inside and
-//    outside without moving the boundary, so max(a, -b) reads as "inside a,
-//    outside b". The argument left un-negated survives; the negated one cuts,
-//    and the cut carries the cutter's edges — a square notch when the box cuts,
-//    a round bite when the circle does. Subtraction is intersection with one
-//    sign flipped, so the three operators are really two.
+// Then it goes in FIRST, before the fill, and it multiplies instead of adds:
+//   vec3 color = bgColor;
+//   color *= 1.0 - shadowStrength * shadow;
+// That one character, *= instead of +=, is the whole difference between a
+// shadow and a glow: multiplying by less than 1 takes light away, adding
+// puts light in.
 //
-//    Offsetting works by subtracting from pos first, because the shape function
-//    only knows the origin: sdCircle(pos - centre, radius) hands it "where am I
-//    relative to the circle's centre". MINUS to move in the PLUS direction —
-//    you're moving the coordinate system, not the shape.
+// One honest cost: the field is evaluated twice per pixel, because a second
+// question genuinely was asked — that is the price of direction. (In a
+// repeated version, like panel 12, each cell would also cast its own shadow
+// and clip it at the seam like everything else does.)
+vec3 panelDropShadow(in vec2 tileUv, in vec2 tilePixel) {
+  return finishPanel(todoColor, tileUv, tilePixel);
+}
+
+// * PANEL 15 — TRANSFORMS.  [next subject]
 //
-//    Honesty note for exercise 6: min() gives a true distance outside the
-//    shapes, but the max()-based operators only give a bound near the join —
-//    fine while you're thresholding it into a mask, but it matters the moment
-//    you use the field for a glow.
-//
-// 6. SOFTEN THE JOIN.  [done]
-//    smin() replaces min(), and k is animated with iTime so the shapes melt
-//    together and apart. Full derivation lives above the function; the short
-//    version is that it is two terms — mix() to stop the sudden hand-over
-//    between fields, and a -k*h*(1-h) parabola that adds material only near
-//    the tie, rounding the corner. Both vanish more than k away from the join,
-//    so it is exactly min() elsewhere.
-//
-//    The reusable idea: k is a distance in the same units as the field, so a
-//    blend width is something you can reason about in the same space as radii
-//    and offsets. And smax(a,b,k) = -smin(-a,-b,k) gives smooth intersection
-//    and subtraction for free.
-//
-// 7. REPEAT IT, free of charge.  [done]
-//    cellPos = pos - cellSize * floor(pos / cellSize + 0.5), then compute the
-//    shapes on cellPos. One fold turns one pair of shapes into a whole grid at
-//    no extra cost per pixel.
-//
-//    What actually cost time was not the repeat line, which worked first try.
-//    Repetition WRAPS the coordinate; it does not scale anything. The shape
-//    constants still meant what they always meant, they were just now being
-//    measured against a cell instead of the screen — reach 0.9 into a budget of
-//    0.35 — so every pixel landed inside something and the screen went solid.
-//    A correct picture of the wrong request.
-//
-//    The fix was to stop writing the constants twice. designReach measures what
-//    the design asks for, fill says how much of the cell to spend, and
-//    shapeScale is the ratio; the shapes are then drawn with the scaling idiom
-//    sdShape(pos / s) * s. Now cellsAcross is a zoom control that cannot break
-//    the layout, which is the property to aim for whenever one number is
-//    derived from another.
-//
-//    Two smaller things worth keeping:
-//      - count cells, don't measure them. pos is 2.0 wide, so cellSize = 0.5 is
-//        a quarter of the short side, not a half. cellsAcross says what it
-//        means, and odd values end flush against the screen edge because
-//        boundaries land at (k + 0.5) * cellSize.
-//      - the result is not a true distance any more. Each pixel only knows its
-//        own cell. Fine for a mask, visible in the contours at every seam, and
-//        it would break a glow or a raymarch.
-//
-// 8. USE THE FIELD, NOT JUST ITS SIGN.
-//    Everything so far has thrown the distance away the moment it had a sign.
-//    Two things that read the actual number, both one line, both going between
-//    the color mix and the cos() contour line:
-//
-//    a) OUTLINE.  [done]
-//       abs(distToEdge) - thickness, through the same clamp ramp as the fill.
-//       An outline is just a shape whose SDF is built out of another shape's
-//       SDF, and abs() on the field is the same fold as abs() on the position
-//       back in sdBox.
-//
-//       The part that was actually new: building the field and COMPOSING it
-//       into the picture are two separate decisions, and only the first one is
-//       maths. The field came out right first try; the compose line then said
-//       "erase everything off the band" rather than "paint ink on the band",
-//       which produces a correct-looking outline for the wrong reason and
-//       quietly costs you the choice of ink color and the option of keeping the
-//       fill. Fixed by swapping the mix() arguments and giving the ink its own
-//       palette entry; the erase version is kept commented beside it, because
-//       comparing the two is the lesson.
-//
-//       The reusable habit: read mix()'s argument order off what the mask
-//       MEANS. Both masks in this file are outside-ness, so in both cases the
-//       thing being drawn goes first. Getting a plausible picture is not
-//       evidence that the reasoning was right.
-//
-//       Also worth having hit: thickness is a distance, so it has a space, and
-//       screen space and design space behave differently the moment cellsAcross
-//       changes.
-//
-//    b) GLOW.  [done]
-//       exp(-glowFalloff * max(distToEdge, 0.0)), added rather than mixed so it
-//       reads as light. exp() is the fade; the clamp keeps the inside from
-//       exploding.
-//
-//       The thing worth remembering is about UNITS, not about glows.
-//       glowFalloff is one over a distance, so a raw number is meaningless
-//       until you say what distance you mean. Written as
-//       1.0 / (glowPixels * onePixel) it becomes "fade over this many screen
-//       pixels", which is both readable and resolution-independent. The first
-//       attempt, 0.01 / onePixel, is the SAME formula asking for 100 pixels of
-//       fade in a gap only about 26 pixels wide — right idea, no room. When a
-//       falloff looks like it does nothing, check the space it has to work in
-//       before changing the formula.
-//
-//       Second thing, and it cost a grey fill to notice: the clamp makes glow
-//       equal 1 across the whole interior, so adding it after the fill lifted
-//       the shape's color to glowIntensity — a measured 0.300 where 0.000 was
-//       meant. Fixed by painting the glow onto the background BEFORE the fill
-//       and letting the fill cover what wasn't wanted. Ordering the layers is
-//       part of the design, not an afterthought, which is why mainImage now
-//       separates computing the masks from painting them.
-//
-//    THEN the point of putting these after exercise 7: the glow draws hard
-//    seams along every cell boundary. That is not a bug in the glow, it is the
-//    repetition caveat cashing out. A mask only looks at the sign right next to
-//    the shape; a glow looks at the value far from it, out where the field is
-//    lying about which copy is nearest. The contour rings were already telling
-//    you this quietly. Two honest responses: lower fill so the glow has decayed
-//    to nothing before it reaches the wall, or raise glowFalloff. Neither is a
-//    fix, they just keep the lie below the noise floor. Worth knowing which one
-//    you are doing.
-//
-// 9. GIVE EACH CELL AN IDENTITY.
-//    Right now every cell is identical, which is the giveaway that it is a
-//    tiling rather than a drawing. The fix is already sitting inside the repeat
-//    line: floor(pos / cellSize + 0.5) IS the integer coordinate of the cell,
-//    so pull it out into a `cellId` and you have a per-cell value for free.
-//
-//    Turn it into a number to vary things with:
-//      float rnd = fract(sin(dot(cellId, vec2(127.1, 311.7))) * 43758.5453);
-//    Not real randomness — a hash. Same cell, same value, every frame, which is
-//    what you want; a per-cell rand() that flickered would be useless.
-//
-//    Then spend it. Easiest first: offset the blend phase per cell so the
-//    shapes melt out of step with each other (rnd * 6.283 added inside sin).
-//    Then rotation, which needs a 2x2:
-//      float a = rnd * 6.283;
-//      mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
-//    and rotate scaledPos before handing it to the shape functions.
-//
-//    Two things to notice when you do. A rotation is orthonormal, so it does
-//    not change distances: unlike shapeScale, there is nothing to multiply back
-//    on the way out. And rotating cannot break the packing, because designReach
-//    is a bounding CIRCLE and a circle is the one bound rotation leaves alone.
-//    That was luck at the time; it is a reason now.
-//
-// 10. DROP SHADOW — parked for later, but here is the shape of it.
-//    A shadow is the glow with three deliberate changes: it is DARK instead of
-//    light, it is OFFSET instead of centred, and it goes UNDERNEATH instead of
-//    on top. Dark and underneath are easy. The offset is the interesting part.
-//
-//    distToEdge says how far you are from the edge but not WHICH WAY, so there
-//    is no way to nudge a glow sideways by editing that number. Direction has
-//    to come from asking the question from somewhere else — the same move as
-//    shapeOffset. Measure the field at a shifted position:
-//
-//      vec2  shadowOffset  = vec2(10.0, -10.0) * onePixel;  // right and DOWN
-//      float shadowPixels  = 8.0;
-//      float shadowFalloff = 1.0 / (shadowPixels * onePixel);
-//      vec2  shadowPos  = (cellPos - shadowOffset) / shapeScale;
-//      float shadowDist = smin(sdCircle(shadowPos - shapeOffset, circleRadius) * shapeScale,
-//                              sdBox(shadowPos + shapeOffset, boxHalfSize) * shapeScale,
-//                              blendWidth);
-//      float shadow = exp(-shadowFalloff * max(shadowDist, 0.0));
-//
-//    Minus to move plus, as always. y is up in this space, so a negative y
-//    throws the shadow downward.
-//
-//    Then it goes in FIRST, before the fill, and it multiplies instead of adds:
-//      vec3 color = bgColor;
-//      color *= 1.0 - shadowStrength * shadow;
-//    That one character, *= instead of +=, is the whole difference between a
-//    shadow and a glow: multiplying by less than 1 takes light away, adding
-//    puts light in.
-//
-//    Two honest costs. It needs a second sdCircle and sdBox per pixel, because
-//    a second question genuinely was asked — that is the price of direction.
-//    And each cell casts its own shadow, so a shadow near a cell wall clips at
-//    the seam like everything else does.
-//
+// Moving, scaling and rotating space before a shape is drawn, The Book of
+// Shaders chapter 8. Saved for after exercises 9 and 10: exercise 9's
+// rotation already needs it, so it may well start there.
+vec3 panelTransforms(in vec2 tileUv, in vec2 tilePixel) {
+  return finishPanel(todoColor, tileUv, tilePixel);
+}
+
+// * DISPATCH — panel index in, colour out.
+vec3 drawPanel(in int index, in vec2 tileUv, in vec2 tilePixel) {
+  if (index == 0)  return panelField(tileUv, tilePixel);
+  if (index == 1)  return panelMask(tileUv, tilePixel);
+  if (index == 2)  return panelContours(tileUv, tilePixel);
+  if (index == 3)  return panelBox(tileUv, tilePixel);
+  if (index == 4)  return panelUnion(tileUv, tilePixel);
+  if (index == 5)  return panelIntersection(tileUv, tilePixel);
+  if (index == 6)  return panelCircleMinusBox(tileUv, tilePixel);
+  if (index == 7)  return panelBoxMinusCircle(tileUv, tilePixel);
+  if (index == 8)  return panelMorph(tileUv, tilePixel);
+  if (index == 9)  return panelSmoothUnion(tileUv, tilePixel);
+  if (index == 10) return panelOutline(tileUv, tilePixel);
+  if (index == 11) return panelGlow(tileUv, tilePixel);
+  if (index == 12) return panelEverything(tileUv, tilePixel);
+  if (index == 13) return panelCellIdentity(tileUv, tilePixel);
+  if (index == 14) return panelDropShadow(tileUv, tilePixel);
+  return panelTransforms(tileUv, tilePixel);
+}
+
+// * THE GRID — the same as levels 1.1 and 1.2, just 4 x 4.
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  vec2 uv        = fragCoord / iResolution.xy;          // 0..1 across the window
+  vec2 grid      = vec2(PANELS_ACROSS, PANELS_DOWN);
+  vec2 cell      = uv * grid;
+  vec2 tileId    = floor(cell);                         // which panel
+  vec2 tileUv    = fract(cell);                         // where inside it, 0..1
+  vec2 tilePixel = grid / iResolution.xy;               // one screen pixel, in panel units
+
+  // Reading order, 0 top-left: GL's y points up, so the row is flipped.
+  int index = int(tileId.x) + int((PANELS_DOWN - 1.0) - tileId.y) * int(PANELS_ACROSS);
+
+  fragColor = vec4(drawPanel(index, tileUv, tilePixel), 1.0);
+}
+
 // STUCK? `pnpm test:shaders` will tell you about syntax and type errors without
 // you having to hunt for a blank screen in the browser.

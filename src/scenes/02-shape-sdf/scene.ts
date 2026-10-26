@@ -6,7 +6,7 @@ const scene: ShaderScene = {
   title: 'SDF shapes',
   level: 2,
   blurb:
-    'Starter — the exercises are in frag.glsl. Draw shapes with math instead of geometry: distance to an edge, smoothstep anti-aliasing, then unions and repetition.',
+    'A 4x4 gallery, one panel per exercise: the distance field, anti-aliased masks, contours, boolean operators, smooth union, outline, glow and repetition, with per-cell identity, drop shadow and transforms still to come.',
   fragment,
 };
 
