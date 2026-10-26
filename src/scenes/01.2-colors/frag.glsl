@@ -49,8 +49,9 @@ const float PANELS_DOWN        = 2.0;  // count
 const float LINE_PIXELS        = 2.0;  // screen pixels: a graph line's width
 const float BORDER_PIXELS      = 1.0;  // screen pixels: the panel separator
 const float CHANNEL_GAP_PIXELS = 4.0;  // screen pixels: how far apart panel 2 nudges its three curves
-const float CHART_LOW          = 0.02;  // panel units: where a curve's 0 is drawn in panel 2
-const float CHART_HIGH         = 0.98;  // panel units: where a curve's 1 is drawn in panel 2
+const float CHART_LOW          = 0.02; // panel units: where a curve's 0 is drawn in panel 2
+const float CHART_HIGH         = 0.98; // panel units: where a curve's 1 is drawn in panel 2
+const float SPIN_SPEED         = 0.1;  // turns per second: panel 3's wheel, one turn every 10 s
 
 // * PALETTE
 //
@@ -246,7 +247,8 @@ vec3 panelPerChannel(in vec2 tileUv, in vec2 tilePixel) {
 //
 // What was left visible was mostly the slopes, which read as three humps
 // in mixed colours rather than three plateaus. The fix is all display, not
-// maths: the chart is squeezed into 0.1..0.9 to lift it off the frame, and
+// maths: the chart is squeezed into CHART_LOW..CHART_HIGH (0.02..0.98) to
+// lift it just off the frame, and
 // the three curves are nudged a few pixels apart so shared flat runs sit
 // side by side. The lines are now a picture of the curves' SHAPES; their
 // height is no longer the exact value, which is fine for a chart.
@@ -256,7 +258,8 @@ vec3 panelPerChannel(in vec2 tileUv, in vec2 tilePixel) {
 // its own colour for about 12% of the width, the far ends of the red top
 // run and the middles of the green and blue ones, where it gets faint.
 // Moving the chart into the darker lower half of the panel (CHART_LOW 0.05,
-// CHART_HIGH 0.5) brings that to 0%, if it ever bothers you.
+// CHART_HIGH 0.5) brings that to 0%, if it ever bothers you. (Measured at
+// 0.1..0.9 first; the current 0.02..0.98 gives the same 12%.)
 vec3 hsb2rgb(in vec3 c) {
   vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
   rgb = rgb * rgb * (3.0 - 2.0 * rgb);       // soften the corners: smoothstep's curve
@@ -421,6 +424,35 @@ vec3 panelHSB(in vec2 tileUv, in vec2 tilePixel) {
 //      smoothstep(0.0, 1.0, length(p) * 2.0). It clamps by itself, so no
 //      min() is needed there.
 //
+// * SPINNING
+//
+// Rotating the wheel is just shifting the hue with time, the same move as
+// tile 10's phase made the sine wave slide:
+//
+//     hue -= iTime * SPIN_SPEED
+//
+// The hue is already measured in TURNS (it was divided by TWO_PI), so the
+// speed reads directly as turns per second: 0.1 is one turn every 10 s.
+// And it needs no wrapping, even though the hue now grows forever: the mod
+// inside hsb2rgb folds it back into one turn every frame, the same reason
+// the negative half of atan needed no fract().
+//
+// WHICH WAY IT TURNS. Pick one colour, red at hue 0. It shows wherever
+// direction - time comes out as a whole turn, so as time grows the
+// direction that shows red has to grow with it, and a growing angle goes
+// anticlockwise (atan counts anticlockwise from the right). So minus turns
+// the colours anticlockwise and plus turns them clockwise, which is easy to
+// guess the wrong way round: "adding" sounds like "forwards".
+//
+// ADD, DON'T MULTIPLY. The first try wrote hue *= iTime * SPIN_SPEED. At
+// the start that multiplies every hue by 0, a solid red wheel; after that
+// the multiplier keeps growing, so one trip round the wheel passes through
+// more and more rainbows (two after 20 s, ten after 100) until it blurs.
+// The same three knobs as the sine tiles:
+//
+//     add to the input        phase       the colours rotate
+//     multiply the input      frequency   more rainbows per turn
+//
 // One quiet detail: atan(0, 0) has no proper answer, and it would be asked
 // at the exact centre. No pixel centre lands there (pixel centres sit at
 // half-pixel positions), and the centre is white whatever the hue anyway,
@@ -431,6 +463,7 @@ vec3 panelWheel(in vec2 tileUv, in vec2 tilePixel) {
   vec2  p      = tileUv - 0.5;                               // from the centre, -0.5..0.5
   p           *= panelSize / min(panelSize.x, panelSize.y);  // measured in the SHORT side: round, and fits
   float hue    = atan(p.y, p.x) / TWO_PI;                    // direction in turns, -0.5..0.5; hsb2rgb wraps it
+  hue         -= iTime * SPIN_SPEED;                         // spin: minus turns the colours anticlockwise
   float radius = min(length(p) * 2.0, 1.0);                  // 0 at the centre, 1 at the rim and beyond
 
   // Saturation from the radius through an ease-out curve: colour arrives
