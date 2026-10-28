@@ -1,0 +1,56 @@
+# Build the site and publish it to GitHub Pages on every push to main.
+#
+# One-time setting on GitHub, needed before the first run can publish:
+#   Settings -> Pages -> Build and deployment -> Source: "GitHub Actions"
+#
+# The build is the same `pnpm build` as locally: type-check, validate every
+# shader with glslangValidator (scripts/check-shaders.mjs), then vite build
+# into dist/. A shader that fails to compile or link fails the deploy, so a
+# broken scene never reaches the live site.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # also allows a manual run from the Actions tab
+
+permissions:
+  contents: read
+  pages: write # to publish
+  id-token: write # to prove the publish came from this workflow
+
+# One deploy at a time; a newer push waits rather than racing an older one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs the pnpm version named in package.json's "packageManager".
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

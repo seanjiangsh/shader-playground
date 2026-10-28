@@ -8,6 +8,10 @@ No Pixi, no Three, no shader libraries. Just a ~250-line WebGL harness so nothin
 is hidden from you. Every experiment you make is saved as its own scene and shows
 up in the sidebar, so the repo grows into a gallery of everything you've tried.
 
+**Live:** https://seanjiangsh.github.io/shader-playground/ (rebuilt from `main`
+on every push; pick a scene in the sidebar, or link straight to one with its id
+after a `#`, e.g. `#02-shape-sdf`).
+
 ## Quick start
 
 ```bash
@@ -202,6 +206,21 @@ pnpm add three        # or: pnpm add pixi.js
 
 That scene shows up in the sidebar with a small `lib` badge. Your GLSL knowledge
 carries straight over — only the plumbing (ShaderMaterial / Filter) is new.
+
+## Deploying (GitHub Pages)
+
+`.github/workflows/deploy.yml` runs on every push to `main`: it installs with
+pnpm, runs the same `pnpm build` as locally (type-check, shader validation,
+then `vite build`), and publishes `dist/` to GitHub Pages. A shader that fails
+to compile or link fails the deploy, so the live site never gets a broken scene.
+
+One-time setting on GitHub, before the first deploy: **Settings → Pages → Build
+and deployment → Source: GitHub Actions**. After that, pushing is all it takes;
+progress shows in the repo's Actions tab.
+
+`vite.config.ts` sets `base: './'`, so the built files use relative paths. That
+is what lets the same build work under `/shader-playground/` on Pages and from
+any other folder.
 
 ## Roadmap (maps to the learning phases)
 
