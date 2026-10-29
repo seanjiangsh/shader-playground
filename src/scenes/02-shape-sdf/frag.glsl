@@ -33,7 +33,7 @@
 //        +----------------+----------------+----------------+----------------+
 //        | 12 repeat, all | 13 per-cell    | 14 drop shadow | 15 transforms  |
 //        |    together    |    identity    |    [your turn] |    [next]      |
-//        |                |    [your turn] |                |                |
+//        |                |    [step 1/4]  |                |                |
 //        +----------------+----------------+----------------+----------------+
 //
 // Each panel's lessons live in that panel's own comment, right above its
@@ -1006,9 +1006,37 @@ vec3 panelEverything(in vec2 tileUv, in vec2 tilePixel) {
   return finishPanel(paintLayers(distToEdge, onePixel), tileUv, tilePixel);
 }
 
-// * PANEL 13 — GIVE EACH CELL AN IDENTITY (exercise 9).  [your turn]
+// * PANEL 13 — GIVE EACH CELL AN IDENTITY (exercise 9).  [in progress]
 //
-// Start from a copy of panel 12.
+// Built in small steps, one at a time:
+//
+//   1. [done] which cell am I in, shown as a colour
+//   2.        turn the cell number into a steady "random" value (a hash)
+//   3.        use it to make each cell's shape melt out of step
+//   4.        use it to rotate each cell's shape (the bridge to transforms)
+//
+// * STEP 1 — WHICH CELL AM I IN
+//
+// The look is panel 11's (fill and glow, no outline), repeated like panel
+// 12. repeatDomain answers "where am I INSIDE my cell" and throws away the
+// other half of the answer, "WHICH cell". That half is the piece of it that
+// picks the nearest cell centre:
+//
+//     cellId = floor(pos / cellSize + 0.5)     whole numbers: (0,0) middle,
+//                                              (1,0) right, (0,-1) below ...
+//
+// The two halves fit back together exactly: cellPos + cellId * cellSize is
+// pos again. Position inside the cell, plus where the cell sits.
+//
+// Shown as a tint: cellId runs from about -2 to 2 across a wide panel
+// (-1 to 1 up and down), so cellId * 0.25 + 0.5 squeezes it into roughly
+// 0..1, the same fit-into-0..1 move as sin01. The column goes in red and the
+// row in green, so the right column is reddest, the top row greenest, and
+// the top-right cell gets both: yellow.
+//
+// The tint goes on the BACKGROUND, before the glow and the fill, so each
+// cell gets its own coloured floor while the shapes stay black on top. The
+// same layer order as everywhere else: what goes down first ends up under.
 //
 // Right now every cell is identical, which is the giveaway that it is a
 // tiling rather than a drawing. The fix is already sitting inside the repeat
@@ -1035,7 +1063,20 @@ vec3 panelEverything(in vec2 tileUv, in vec2 tilePixel) {
 // is a bounding CIRCLE and a circle is the one bound rotation leaves alone.
 // That was luck at the time; it is a reason now.
 vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
-  return finishPanel(todoColor, tileUv, tilePixel);
+  vec2  pos      = panelPos(tileUv, tilePixel);
+  float onePixel = panelOnePixel(tilePixel);
+
+  float cellSize = 2.0 / CELLS_ACROSS;
+  vec2  cellPos  = repeatDomain(pos, cellSize);     // WHERE inside my cell
+  vec2  cellId   = floor(pos / cellSize + 0.5);     // WHICH cell: (0,0) middle, (1,0) right, (0,-1) below
+  float dist     = sceneField(cellPos, fitToCell(cellSize));
+
+  vec3 cellTint = vec3(cellId * 0.25 + 0.5, 0.0) * 0.5;   // column in red, row in green
+
+  vec3 color = bgColor + cellTint;                                     // 1. each cell's own floor
+  color += glowFrom(dist, onePixel) * outlineColor * GLOW_INTENSITY;   // 2. light
+  color  = mix(shapeColor, color, coverage(dist, onePixel));           // 3. fill covers it
+  return finishPanel(color, tileUv, tilePixel);
 }
 
 // * PANEL 14 — DROP SHADOW (exercise 10).  [your turn]
