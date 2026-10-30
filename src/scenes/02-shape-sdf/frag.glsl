@@ -33,7 +33,7 @@
 //        +----------------+----------------+----------------+----------------+
 //        | 12 repeat, all | 13 per-cell    | 14 drop shadow | 15 transforms  |
 //        |    together    |    identity    |    [your turn] |    [next]      |
-//        |                |    [step 1/4]  |                |                |
+//        |                |    [step 2/4]  |                |                |
 //        +----------------+----------------+----------------+----------------+
 //
 // Each panel's lessons live in that panel's own comment, right above its
@@ -1006,12 +1006,52 @@ vec3 panelEverything(in vec2 tileUv, in vec2 tilePixel) {
   return finishPanel(paintLayers(distToEdge, onePixel), tileUv, tilePixel);
 }
 
+// * HASH21 — a steady "random" number for a whole-number position.
+//
+// GLSL has no random(). Every pixel runs this same code at the same moment,
+// pixels cannot talk to each other, and nothing is remembered between frames,
+// so there is nowhere to keep a "next random number". All a pixel has is its
+// inputs. So "random" in a shader means: take an input and scramble it so
+// badly that the output looks unrelated to it. That scrambler is a HASH.
+// Same input, same output, every frame, which is exactly what you want: a
+// per-cell value that flickered would be useless.
+//
+// The name says the shape of it: 2 numbers in, 1 number out. Inside out:
+//
+//   dot(p, vec2(127.1, 311.7))   squash the two numbers into one; the odd
+//                                weights keep (1,0) and (0,1) apart
+//   sin(...)                     a wave between -1 and 1; neighbours still
+//                                look related at this point
+//   * 43758.5453                 blow tiny differences up into huge ones
+//   fract(...)                   keep only the digits after the point: 0..1,
+//                                and those digits behave unpredictably
+//
+// The big multiplier is what does the scrambling. Feed in 0, 0.3, 0.6, 0.9 ...
+// and without it you get 0.00, 0.30, 0.56, 0.78 ...: just the sine wave,
+// climbing smoothly. With it: 0.00, 0.53, 0.93, 0.25 ... unrelated. With only
+// a 3 x 3 of whole-number cells, 127.1 and 311.7 already jump sin around a
+// lot, so both versions look random-ish there; removing the multiplier just
+// gives a DIFFERENT scramble (the bright cell moves from left to right). It
+// earns its keep when neighbouring inputs are close together.
+//
+// One quirk: hash21(vec2(0.0)) is always 0. dot gives 0, sin(0) is 0, and no
+// multiplier changes that. So the middle cell is always the darkest. If that
+// matters, nudge the input: hash21(cellId + 0.5).
+//
+// The constants are not magic in any deep sense; they are a widely copied
+// set that happens to scramble well. On some mobile GPUs sin of large numbers
+// loses precision and the pattern can band; for whole-number cell ids this
+// small it is fine.
+float hash21(in vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
 // * PANEL 13 — GIVE EACH CELL AN IDENTITY (exercise 9).  [in progress]
 //
 // Built in small steps, one at a time:
 //
 //   1. [done] which cell am I in, shown as a colour
-//   2.        turn the cell number into a steady "random" value (a hash)
+//   2. [done] turn the cell number into a steady "random" value (a hash)
 //   3.        use it to make each cell's shape melt out of step
 //   4.        use it to rotate each cell's shape (the bridge to transforms)
 //
@@ -1028,34 +1068,37 @@ vec3 panelEverything(in vec2 tileUv, in vec2 tilePixel) {
 // The two halves fit back together exactly: cellPos + cellId * cellSize is
 // pos again. Position inside the cell, plus where the cell sits.
 //
-// Shown as a tint: cellId runs from about -2 to 2 across a wide panel
-// (-1 to 1 up and down), so cellId * 0.25 + 0.5 squeezes it into roughly
-// 0..1, the same fit-into-0..1 move as sin01. The column goes in red and the
-// row in green, so the right column is reddest, the top row greenest, and
-// the top-right cell gets both: yellow.
+// Step 1 showed it as a tint, vec3(cellId * 0.25 + 0.5, 0.0) * 0.5: column
+// in red, row in green, squeezed into 0..1 the same way as sin01. The right
+// column came out reddest, the top row greenest, the top-right cell yellow.
+// That proved cellId was right, but it is ORDERLY: the colour follows the
+// position. Step 2 replaces it.
 //
 // The tint goes on the BACKGROUND, before the glow and the fill, so each
-// cell gets its own coloured floor while the shapes stay black on top. The
-// same layer order as everywhere else: what goes down first ends up under.
+// cell gets its own floor while the shapes stay black on top. The same layer
+// order as everywhere else: what goes down first ends up under.
 //
-// Right now every cell is identical, which is the giveaway that it is a
-// tiling rather than a drawing. The fix is already sitting inside the repeat
-// line: floor(pos / cellSize + 0.5) IS the integer coordinate of the cell,
-// so pull it out into a `cellId` and you have a per-cell value for free.
+// * STEP 2 — ONE "RANDOM" NUMBER PER CELL
 //
-// Turn it into a number to vary things with:
-//   float rnd = fract(sin(dot(cellId, vec2(127.1, 311.7))) * 43758.5453);
-// Not real randomness — a hash. Same cell, same value, every frame, which is
-// what you want; a per-cell rand() that flickered would be useless.
+// hash21(cellId) (above) turns the cell number into a value from 0 to 1 that
+// looks unrelated to its neighbours. Every pixel in a cell shares one cellId,
+// so the whole cell gets one flat grey. Times 0.3 keeps it dim, so the glow
+// still reads on top of it.
 //
-// Then spend it. Easiest first: offset the blend phase per cell so the
-// shapes melt out of step with each other (rnd * 6.283 added inside the
-// sin in sceneField, which means giving sceneField a phase parameter).
-// Then rotation, which needs a 2x2:
+// That number is the per-cell identity. The grey is only there to SEE it;
+// steps 3 and 4 spend it on motion instead.
+//
+// * STILL TO COME
+//
+// Step 3: offset the blend phase per cell so the shapes melt out of step
+// with each other (rnd * 6.283 added inside the sin in sceneField, which
+// means giving sceneField a phase parameter).
+//
+// Step 4: rotation, which needs a 2x2:
 //   float a = rnd * 6.283;
 //   mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
-// and rotate cellPos before handing it to sceneField. That second half is
-// really the first step of transforms, panel 15's subject.
+// and rotate cellPos before handing it to sceneField. That is really the
+// first step of transforms, panel 15's subject.
 //
 // Two things to notice when you do. A rotation is orthonormal, so it does
 // not change distances: unlike shapeScale, there is nothing to multiply back
@@ -1071,7 +1114,8 @@ vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
   vec2  cellId   = floor(pos / cellSize + 0.5);     // WHICH cell: (0,0) middle, (1,0) right, (0,-1) below
   float dist     = sceneField(cellPos, fitToCell(cellSize));
 
-  vec3 cellTint = vec3(cellId * 0.25 + 0.5, 0.0) * 0.5;   // column in red, row in green
+  float cellRandom = hash21(cellId);                // 0..1, steady per cell, unrelated to the neighbours
+  vec3  cellTint   = vec3(cellRandom) * 0.3;        // shown as a dim grey
 
   vec3 color = bgColor + cellTint;                                     // 1. each cell's own floor
   color += glowFrom(dist, onePixel) * outlineColor * GLOW_INTENSITY;   // 2. light
