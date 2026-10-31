@@ -33,7 +33,7 @@
 //        +----------------+----------------+----------------+----------------+
 //        | 12 repeat, all | 13 per-cell    | 14 drop shadow | 15 transforms  |
 //        |    together    |    identity    |    [your turn] |    [next]      |
-//        |                |    [step 2/4]  |                |                |
+//        |                |    [step 3/4]  |                |                |
 //        +----------------+----------------+----------------+----------------+
 //
 // Each panel's lessons live in that panel's own comment, right above its
@@ -392,9 +392,28 @@ float boxField(in vec2 pos, in float shapeScale) {
 // than crashing, the clamp swallows it, and the result degrades to plain
 // min() — so it looks fine. If it ever needs to be airtight, floor it:
 // max(blendWidth, 1e-4).
-float sceneField(in vec2 pos, in float shapeScale) {
-  float blendWidth = (0.5 + 0.5 * sin(iTime)) * shapeScale;
+//
+// * TWO sceneFields, ONE formula (added for panel 13, step 3).
+//
+// phase is where in the melt cycle this copy starts, in radians: 0 is the
+// shared rhythm, 6.2832 (one full turn of sin) is the same rhythm again.
+// Adding inside the sin SHIFTS the wave sideways; it does not make it faster
+// or bigger. The same "add = phase" as tile 10 in level 1.1.
+//
+// Same name, different number of inputs: GLSL calls that OVERLOADING and
+// picks the version by what you pass. The 2-input one is now just "phase 0",
+// so panels 9 to 12 call it unchanged and the blend formula lives in one
+// place. Two copies of a formula drift apart the first time one is tuned.
+//
+// Order matters here. GLSL ES 1.00 reads top to bottom, and a function must
+// exist before anything calls it. So the 3-input version, which does the
+// work, comes FIRST, and the 2-input one that calls it comes second.
+float sceneField(in vec2 pos, in float shapeScale, in float phase) {
+  float blendWidth = (0.5 + 0.5 * sin(iTime + phase)) * shapeScale;
   return smin(circleField(pos, shapeScale), boxField(pos, shapeScale), blendWidth);
+}
+float sceneField(in vec2 pos, in float shapeScale) {
+  return sceneField(pos, shapeScale, 0.0);
 }
 
 // * COVERAGE — turn any distance field into a mask, with one pixel of
@@ -1052,7 +1071,7 @@ float hash21(in vec2 p) {
 //
 //   1. [done] which cell am I in, shown as a colour
 //   2. [done] turn the cell number into a steady "random" value (a hash)
-//   3.        use it to make each cell's shape melt out of step
+//   3. [done] use it to make each cell's shape melt out of step
 //   4.        use it to rotate each cell's shape (the bridge to transforms)
 //
 // * STEP 1 — WHICH CELL AM I IN
@@ -1088,14 +1107,27 @@ float hash21(in vec2 p) {
 // That number is the per-cell identity. The grey is only there to SEE it;
 // steps 3 and 4 spend it on motion instead.
 //
+// * STEP 3 — EACH CELL MELTS ON ITS OWN CLOCK
+//
+// cellRandom * 6.2832 turns the 0..1 number into a start point anywhere in
+// one full melt cycle, and the 3-input sceneField adds it inside the sin.
+// Every cell still melts at the same SPEED; they just start at different
+// moments, so the gallery stops pulsing in unison.
+//
+// cellRandom has to exist before dist asks for it, so the dist line moved
+// below the hash. Lines in a function run top to bottom, same as functions
+// in the file.
+//
+// The grey is the check. Phase is just grey times 2π, so two cells with
+// nearly the same grey melt nearly together. One surprise: a grey near 0.9
+// and a grey near 0.0 also look nearly in step, because 0.9 of a turn is
+// only 0.1 short of a full one, and a full turn is no shift at all. The middle
+// cell has grey 0, so phase 0, so it melts in step with panels 9 to 12.
+//
 // * STILL TO COME
 //
-// Step 3: offset the blend phase per cell so the shapes melt out of step
-// with each other (rnd * 6.283 added inside the sin in sceneField, which
-// means giving sceneField a phase parameter).
-//
 // Step 4: rotation, which needs a 2x2:
-//   float a = rnd * 6.283;
+//   float a = cellRandom * 6.2832;
 //   mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
 // and rotate cellPos before handing it to sceneField. That is really the
 // first step of transforms, panel 15's subject.
@@ -1112,10 +1144,10 @@ vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
   float cellSize = 2.0 / CELLS_ACROSS;
   vec2  cellPos  = repeatDomain(pos, cellSize);     // WHERE inside my cell
   vec2  cellId   = floor(pos / cellSize + 0.5);     // WHICH cell: (0,0) middle, (1,0) right, (0,-1) below
-  float dist     = sceneField(cellPos, fitToCell(cellSize));
 
   float cellRandom = hash21(cellId);                // 0..1, steady per cell, unrelated to the neighbours
   vec3  cellTint   = vec3(cellRandom) * 0.3;        // shown as a dim grey
+  float dist       = sceneField(cellPos, fitToCell(cellSize), cellRandom * 6.2832);   // own start in the melt cycle
 
   vec3 color = bgColor + cellTint;                                     // 1. each cell's own floor
   color += glowFrom(dist, onePixel) * outlineColor * GLOW_INTENSITY;   // 2. light
