@@ -33,7 +33,7 @@
 //        +----------------+----------------+----------------+----------------+
 //        | 12 repeat, all | 13 per-cell    | 14 drop shadow | 15 transforms  |
 //        |    together    |    identity    |    [your turn] |    [next]      |
-//        |                |    [step 3/4]  |                |                |
+//        |                |                |                |                |
 //        +----------------+----------------+----------------+----------------+
 //
 // Each panel's lessons live in that panel's own comment, right above its
@@ -1065,14 +1065,14 @@ float hash21(in vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 
-// * PANEL 13 — GIVE EACH CELL AN IDENTITY (exercise 9).  [in progress]
+// * PANEL 13 — GIVE EACH CELL AN IDENTITY (exercise 9).
 //
 // Built in small steps, one at a time:
 //
 //   1. [done] which cell am I in, shown as a colour
 //   2. [done] turn the cell number into a steady "random" value (a hash)
 //   3. [done] use it to make each cell's shape melt out of step
-//   4.        use it to rotate each cell's shape (the bridge to transforms)
+//   4. [done] use it to rotate each cell's shape (the bridge to transforms)
 //
 // * STEP 1 — WHICH CELL AM I IN
 //
@@ -1124,19 +1124,42 @@ float hash21(in vec2 p) {
 // only 0.1 short of a full one, and a full turn is no shift at all. The middle
 // cell has grey 0, so phase 0, so it melts in step with panels 9 to 12.
 //
-// * STILL TO COME
+// * STEP 4 — EACH CELL TURNS ITS SHAPE
 //
-// Step 4: rotation, which needs a 2x2:
-//   float a = cellRandom * 6.2832;
-//   mat2 rot = mat2(cos(a), -sin(a), sin(a), cos(a));
-// and rotate cellPos before handing it to sceneField. That is really the
-// first step of transforms, panel 15's subject.
+// angle = cellRandom * 6.2832 turns the 0..1 number into 0..one full turn.
+// A mat2 is a 2 x 2 grid of numbers; multiplying a vec2 by it turns the
+// vec2 around the origin. Here the origin is the cell centre, because
+// cellPos is measured from it, so every shape turns in place.
 //
-// Two things to notice when you do. A rotation is orthonormal, so it does
-// not change distances: unlike shapeScale, there is nothing to multiply back
-// on the way out. And rotating cannot break the packing, because designReach
-// is a bounding CIRCLE and a circle is the one bound rotation leaves alone.
-// That was luck at the time; it is a reason now.
+// Like an offset, this turns the COORDINATES, not the shape: sceneField
+// still only knows how to draw the design upright, and it is handed "where
+// am I, in the shape's turned frame". Turn the frame one way and the shape
+// appears turned the other way, the same reason minus moves an offset right.
+//
+// Which side of the * the matrix goes on picks the direction:
+//
+//   rotation * cellPos     turns the shape anticlockwise by angle
+//   cellPos * rotation     turns it clockwise (this is what the code does)
+//
+// GLSL treats a vec2 on the LEFT as a row, which is the same as using the
+// matrix flipped across its diagonal, and the flipped rotation is the
+// rotation backwards. With a random angle per cell either is fine; it only
+// matters once something should turn a particular way, like a clock hand.
+//
+// What to look for: the middle cell (grey 0, angle 0) stays upright, and a
+// cell whose grey is close to 1 looks nearly upright too, because a full
+// turn lands back where it started.
+//
+// Two things that did NOT need changing. A rotation does not stretch, so it
+// does not change distances: unlike shapeScale, there is nothing to multiply
+// back on the way out, and onePixel and the glow stay correct. And no shape
+// pokes out of its cell, because fitToCell sized the design by a bounding
+// CIRCLE (designReach), and a circle is the one outline turning leaves
+// alone. That was luck when it was written; it is a reason now.
+//
+// Next, the moving version is one more term in the angle: add iTime times a
+// speed and every cell spins, each from its own starting tilt. Then panel
+// 15 picks up transforms properly: rotate, scale and move, in which order.
 vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
   vec2  pos      = panelPos(tileUv, tilePixel);
   float onePixel = panelOnePixel(tilePixel);
@@ -1147,7 +1170,10 @@ vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
 
   float cellRandom = hash21(cellId);                // 0..1, steady per cell, unrelated to the neighbours
   vec3  cellTint   = vec3(cellRandom) * 0.3;        // shown as a dim grey
-  float dist       = sceneField(cellPos, fitToCell(cellSize), cellRandom * 6.2832);   // own start in the melt cycle
+  float angle      = cellRandom * 6.2832;           // own tilt: 0..one full turn
+  mat2  rotation   = mat2(cos(angle), -sin(angle),
+                          sin(angle),  cos(angle));
+  float dist       = sceneField(cellPos * rotation, fitToCell(cellSize), cellRandom * 6.2832);   // turned frame, own melt start
 
   vec3 color = bgColor + cellTint;                                     // 1. each cell's own floor
   color += glowFrom(dist, onePixel) * outlineColor * GLOW_INTENSITY;   // 2. light
