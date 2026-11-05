@@ -104,6 +104,7 @@ const float GLOW_PIXELS    = 6.0;              // screen pixels
 const float GLOW_INTENSITY = 0.3;              // brightness, unitless
 const float CONTOUR_FREQ   = 10.0;             // 1 / pos units
 const float CONTOUR_AMOUNT = 0.06;             // brightness, unitless
+const float SPIN_SPEED     = 0.5;              // radians per second
 
 // * sdCircle — the easy one: distance from the origin, shifted so that 0
 // lands on the rim. sdBox below is the same idea, only harder to see.
@@ -1073,6 +1074,7 @@ float hash21(in vec2 p) {
 //   2. [done] turn the cell number into a steady "random" value (a hash)
 //   3. [done] use it to make each cell's shape melt out of step
 //   4. [done] use it to rotate each cell's shape (the bridge to transforms)
+//   5. [done] bonus: add time to the angle, so every cell spins
 //
 // * STEP 1 — WHICH CELL AM I IN
 //
@@ -1157,9 +1159,35 @@ float hash21(in vec2 p) {
 // CIRCLE (designReach), and a circle is the one outline turning leaves
 // alone. That was luck when it was written; it is a reason now.
 //
-// Next, the moving version is one more term in the angle: add iTime times a
-// speed and every cell spins, each from its own starting tilt. Then panel
-// 15 picks up transforms properly: rotate, scale and move, in which order.
+// * STEP 5 (BONUS) — EVERY CELL SPINS
+//
+// One more term in the angle:
+//
+//     angle = cellRandom * 6.2832  +  iTime * SPIN_SPEED
+//             own starting tilt       the turning everyone shares
+//
+// The same "add = phase" as the melt in step 3, now for rotation. Each cell
+// starts at its own tilt, then everyone turns at the same rate.
+//
+// What it does, and why:
+//
+//   direction   Clockwise. The angle grows with time, and cellPos * rotation
+//               turns the shape clockwise as the angle grows. Two ways to
+//               reverse it: - iTime * SPIN_SPEED, or put the matrix on the
+//               other side (rotation * cellPos). Doing BOTH cancels out and
+//               it is clockwise again.
+//   tilts       Stay different forever. Every cell adds the same amount each
+//               second, so the GAPS between their angles never change; the
+//               whole set turns together like gears on one shaft.
+//   fit         Nothing pokes out, at any moment. The bounding circle that
+//               fitToCell used looks the same at every angle, so spinning is
+//               no harder on the packing than a fixed tilt was.
+//
+// SPIN_SPEED is in radians per second, so 0.5 is one full turn every 2π /
+// 0.5 ≈ 12.6 seconds.
+//
+// Next is panel 14, the drop shadow. Panel 15 then picks up transforms
+// properly: rotate, scale and move, and why the order matters.
 vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
   vec2  pos      = panelPos(tileUv, tilePixel);
   float onePixel = panelOnePixel(tilePixel);
@@ -1170,7 +1198,7 @@ vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
 
   float cellRandom = hash21(cellId);                // 0..1, steady per cell, unrelated to the neighbours
   vec3  cellTint   = vec3(cellRandom) * 0.3;        // shown as a dim grey
-  float angle      = cellRandom * 6.2832;           // own tilt: 0..one full turn
+  float angle      = cellRandom * 6.2832 + iTime * SPIN_SPEED;   // own starting tilt + the shared spin
   mat2  rotation   = mat2(cos(angle), -sin(angle),
                           sin(angle),  cos(angle));
   float dist       = sceneField(cellPos * rotation, fitToCell(cellSize), cellRandom * 6.2832);   // turned frame, own melt start
