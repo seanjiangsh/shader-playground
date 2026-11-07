@@ -32,7 +32,7 @@
 //        |                |    union       |                |                |
 //        +----------------+----------------+----------------+----------------+
 //        | 12 repeat, all | 13 per-cell    | 14 drop shadow | 15 transforms  |
-//        |    together    |    identity    |    [step 1/3]  |    [next]      |
+//        |    together    |    identity    |    [step 2/3]  |    [next]      |
 //        |                |                |                |                |
 //        +----------------+----------------+----------------+----------------+
 //
@@ -1216,7 +1216,7 @@ vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
 // light AWAY instead of adding it. Built in small steps:
 //
 //   1. [done] a hard copy of the shape, shifted, drawn underneath
-//   2.        soften its edge so it fades out instead of stopping
+//   2. [done] soften its edge so it fades out instead of stopping
 //   3.        make it take light away (multiply) instead of painting a colour
 //
 // * STEP 1 — A SHIFTED COPY, UNDERNEATH
@@ -1246,14 +1246,41 @@ vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
 //
 // The grey is a stand-in, chosen only so the offset is easy to see.
 //
+// * STEP 2 — SOFTEN THE EDGE
+//
+// The hard copy used coverage, a 1-pixel edge. A shadow should fade with
+// distance instead, which is exactly what panel 11's glow does:
+//
+//     shadow = exp(-shadowFalloff * max(shadowDist, 0.0))
+//
+// shadowFalloff = 1 / (shadowPixels * onePixel), so the exponent is just
+// "how many shadowPixels out am I". exp of minus that never reaches zero; it
+// keeps shrinking by the same FACTOR every shadowPixels:
+//
+//     pixels out from the copy's edge    0     8     16    24    32
+//     shadow left                        1.00  0.37  0.14  0.05  0.02
+//
+// So at 8 pixels about a third is left, not none. shadowPixels is not where
+// it ends; it is how fast it fades. By about three of them it is too faint
+// to see, which is why it LOOKS like it ends.
+//
+// max(shadowDist, 0.0) does a different job here than in intersection,
+// though it is the same function. Inside the copy shadowDist is NEGATIVE, so
+// without the max the exponent turns positive and exp grows past 1: e^2 is
+// 7.4 two shadowPixels in. mix with an amount above 1 does not stop at the
+// grey, it carries on past it, so the middle of the copy would burn out to
+// white. The max flattens everything inside to 0, so exp(0) = 1: solid
+// shadow inside, fading only outside.
+//
+// The order inside mix flipped compared with step 1. coverage is 1 OUTSIDE,
+// so it went in as "how much background"; shadow is 1 INSIDE, so it goes in
+// as "how much grey": mix(color, grey, shadow).
+//
+// The hard coverage line has to GO, not stay alongside. Painted after the
+// soft one, it would cover the soft edge with a hard grey copy again, and the
+// only soft part left would be the faint halo outside it.
+//
 // * STILL TO COME
-//
-// Step 2, soften: instead of the hard coverage, fade out with distance the
-// way the glow does:
-//
-//   float shadowPixels  = 8.0;
-//   float shadowFalloff = 1.0 / (shadowPixels * onePixel);
-//   float shadow = exp(-shadowFalloff * max(shadowDist, 0.0));
 //
 // Step 3, take light away: multiply instead of mixing in a colour,
 //
@@ -1271,14 +1298,17 @@ vec3 panelDropShadow(in vec2 tileUv, in vec2 tilePixel) {
   vec2  pos      = panelPos(tileUv, tilePixel);
   float onePixel = panelOnePixel(tilePixel);
 
-  vec2  shadowOffset = vec2(10.0, -10.0) * onePixel;   // 10 screen pixels right, 10 down
-  float shapeScale   = fitToCell(2.0);                 // the panel as one big cell
-  float shadowDist   = sceneField(pos - shadowOffset, shapeScale);   // same question, asked from a shifted spot
-  float dist         = sceneField(pos, shapeScale);
+  vec2  shadowOffset  = vec2(10.0, -10.0) * onePixel;   // 10 screen pixels right, 10 down
+  float shapeScale    = fitToCell(2.0);                 // the panel as one big cell
+  float shadowDist    = sceneField(pos - shadowOffset, shapeScale);   // same question, asked from a shifted spot
+  float shadowPixels  = 8.0;                            // screen pixels per "about a third left"
+  float shadowFalloff = 1.0 / (shadowPixels * onePixel);
+  float shadow        = exp(-shadowFalloff * max(shadowDist, 0.0));   // 1 inside the copy, fading outside
+  float dist          = sceneField(pos, shapeScale);
 
   vec3 color = bgColor;
-  color = mix(vec3(0.5), color, coverage(shadowDist, onePixel));   // 1. the copy, underneath (grey stand-in)
-  color = mix(shapeColor, color, coverage(dist, onePixel));        // 2. the real shape on top
+  color = mix(color, vec3(0.5), shadow);                     // 1. the soft copy, underneath (grey stand-in)
+  color = mix(shapeColor, color, coverage(dist, onePixel));  // 2. the real shape on top
 
   return finishPanel(color, tileUv, tilePixel);
 }
