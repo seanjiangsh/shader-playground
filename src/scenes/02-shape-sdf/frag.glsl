@@ -32,7 +32,7 @@
 //        |                |    union       |                |                |
 //        +----------------+----------------+----------------+----------------+
 //        | 12 repeat, all | 13 per-cell    | 14 drop shadow | 15 transforms  |
-//        |    together    |    identity    |    [your turn] |    [next]      |
+//        |    together    |    identity    |    [step 1/3]  |    [next]      |
 //        |                |                |                |                |
 //        +----------------+----------------+----------------+----------------+
 //
@@ -1209,46 +1209,78 @@ vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
   return finishPanel(color, tileUv, tilePixel);
 }
 
-// * PANEL 14 — DROP SHADOW (exercise 10).  [your turn]
+// * PANEL 14 — DROP SHADOW (exercise 10).  [in progress]
 //
-// Start from a copy of panel 11, the glow: a shadow is its dark, offset
-// twin.
+// A shadow is panel 11's glow with three deliberate changes: it is OFFSET
+// instead of centred, it goes UNDERNEATH instead of on top, and it takes
+// light AWAY instead of adding it. Built in small steps:
 //
-// A shadow is the glow with three deliberate changes: it is DARK instead of
-// light, it is OFFSET instead of centred, and it goes UNDERNEATH instead of
-// on top. Dark and underneath are easy. The offset is the interesting part.
+//   1. [done] a hard copy of the shape, shifted, drawn underneath
+//   2.        soften its edge so it fades out instead of stopping
+//   3.        make it take light away (multiply) instead of painting a colour
 //
-// distToEdge says how far you are from the edge but not WHICH WAY, so there
-// is no way to nudge a glow sideways by editing that number. Direction has
-// to come from asking the question from somewhere else — the same move as
-// SHAPE_OFFSET. Measure the field at a shifted position:
+// * STEP 1 — A SHIFTED COPY, UNDERNEATH
 //
-//   vec2  shadowOffset  = vec2(10.0, -10.0) * onePixel;  // right and DOWN
-//   float shadowPixels  = 8.0;
-//   float shadowFalloff = 1.0 / (shadowPixels * onePixel);
-//   float shadowDist    = sceneField(pos - shadowOffset, shapeScale);
-//   float shadow = exp(-shadowFalloff * max(shadowDist, 0.0));
+// The offset is the interesting part. dist says how far you are from the
+// edge but not WHICH WAY, so no edit to that number can nudge anything
+// sideways. Direction has to come from asking the question somewhere else:
+//
+//     shadowDist = sceneField(pos - shadowOffset, shapeScale)
+//
+// Minus to move plus, the same move as SHAPE_OFFSET. y is up in this space,
+// so (10, -10) pixels puts the copy right and DOWN, and the grey peeks out
+// on the lower-right side, as if lit from the upper left. Measuring the
+// offset in onePixel keeps it 10 screen pixels at any panel size.
 //
 // (Before the gallery this needed the circle, the box and smin written out
-// a second time. sceneField now wraps all three, so the second question is
-// one call with a shifted position.)
+// a second time. sceneField wraps all three, so the second question is one
+// call with a shifted position.)
 //
-// Minus to move plus, as always. y is up in this space, so a negative y
-// throws the shadow downward.
+// Layer order does the "underneath". Each mix paints over what came before:
 //
-// Then it goes in FIRST, before the fill, and it multiplies instead of adds:
-//   vec3 color = bgColor;
+//   copy first, shape second    the shape covers the copy where they
+//                               overlap; grey shows only beside it
+//   shape first, copy second    the grey copy covers the shape; the black
+//                               shows only on the upper-left sliver the
+//                               copy misses, so the two look swapped
+//
+// The grey is a stand-in, chosen only so the offset is easy to see.
+//
+// * STILL TO COME
+//
+// Step 2, soften: instead of the hard coverage, fade out with distance the
+// way the glow does:
+//
+//   float shadowPixels  = 8.0;
+//   float shadowFalloff = 1.0 / (shadowPixels * onePixel);
+//   float shadow = exp(-shadowFalloff * max(shadowDist, 0.0));
+//
+// Step 3, take light away: multiply instead of mixing in a colour,
+//
 //   color *= 1.0 - shadowStrength * shadow;
+//
 // That one character, *= instead of +=, is the whole difference between a
 // shadow and a glow: multiplying by less than 1 takes light away, adding
 // puts light in.
 //
 // One honest cost: the field is evaluated twice per pixel, because a second
-// question genuinely was asked — that is the price of direction. (In a
+// question genuinely was asked; that is the price of direction. (In a
 // repeated version, like panel 12, each cell would also cast its own shadow
 // and clip it at the seam like everything else does.)
 vec3 panelDropShadow(in vec2 tileUv, in vec2 tilePixel) {
-  return finishPanel(todoColor, tileUv, tilePixel);
+  vec2  pos      = panelPos(tileUv, tilePixel);
+  float onePixel = panelOnePixel(tilePixel);
+
+  vec2  shadowOffset = vec2(10.0, -10.0) * onePixel;   // 10 screen pixels right, 10 down
+  float shapeScale   = fitToCell(2.0);                 // the panel as one big cell
+  float shadowDist   = sceneField(pos - shadowOffset, shapeScale);   // same question, asked from a shifted spot
+  float dist         = sceneField(pos, shapeScale);
+
+  vec3 color = bgColor;
+  color = mix(vec3(0.5), color, coverage(shadowDist, onePixel));   // 1. the copy, underneath (grey stand-in)
+  color = mix(shapeColor, color, coverage(dist, onePixel));        // 2. the real shape on top
+
+  return finishPanel(color, tileUv, tilePixel);
 }
 
 // * PANEL 15 — TRANSFORMS.  [next subject]
