@@ -32,7 +32,7 @@
 //        |                |    union       |                |                |
 //        +----------------+----------------+----------------+----------------+
 //        | 12 repeat, all | 13 per-cell    | 14 drop shadow | 15 transforms  |
-//        |    together    |    identity    |    [step 2/3]  |    [next]      |
+//        |    together    |    identity    |                |    [next]      |
 //        |                |                |                |                |
 //        +----------------+----------------+----------------+----------------+
 //
@@ -1209,7 +1209,7 @@ vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
   return finishPanel(color, tileUv, tilePixel);
 }
 
-// * PANEL 14 — DROP SHADOW (exercise 10).  [in progress]
+// * PANEL 14 — DROP SHADOW (exercise 10).
 //
 // A shadow is panel 11's glow with three deliberate changes: it is OFFSET
 // instead of centred, it goes UNDERNEATH instead of on top, and it takes
@@ -1217,7 +1217,7 @@ vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
 //
 //   1. [done] a hard copy of the shape, shifted, drawn underneath
 //   2. [done] soften its edge so it fades out instead of stopping
-//   3.        make it take light away (multiply) instead of painting a colour
+//   3. [done] make it take light away (multiply) instead of painting a colour
 //
 // * STEP 1 — A SHIFTED COPY, UNDERNEATH
 //
@@ -1280,15 +1280,36 @@ vec3 panelCellIdentity(in vec2 tileUv, in vec2 tilePixel) {
 // soft one, it would cover the soft edge with a hard grey copy again, and the
 // only soft part left would be the faint halo outside it.
 //
-// * STILL TO COME
+// * STEP 3 — TAKE LIGHT AWAY
 //
-// Step 3, take light away: multiply instead of mixing in a colour,
+// The grey was a colour painted ON the background. A shadow does not bring
+// a colour; it darkens whatever is already there. That is a multiply:
 //
-//   color *= 1.0 - shadowStrength * shadow;
+//     color *= 1.0 - shadowStrength * shadow
+//
+// Read it as "keep this much of the light". Inside the copy shadow is 1, so
+// at strength 0.6 you keep 0.4 of the background; far away shadow is near 0
+// and you keep nearly all of it.
 //
 // That one character, *= instead of +=, is the whole difference between a
 // shadow and a glow: multiplying by less than 1 takes light away, adding
 // puts light in.
+//
+// What colour is it? Black at partial opacity, exactly. Multiplying by
+// (1 - a) is the same sum as mixing toward black by a:
+//
+//     mix(color, vec3(0.0), a)  =  color * (1 - a) + 0 * a  =  color * (1 - a)
+//
+// So on the blue background it reads as a DARKER BLUE, never grey: the hue
+// is kept and only the brightness drops. On a red floor it would be dark red.
+// That is why it looks like a shadow and the grey did not.
+//
+// Strength 1.0 is the trap to know about. The middle of the shadow goes
+// fully black, the shape is also black, and where they touch there is
+// nothing left to tell them apart: the shape seems to grow a smudged tail.
+// A shadow needs to stay lighter than the thing casting it. 0.6 keeps the
+// edge readable. (Real drop shadows usually sit under LIGHT shapes for the
+// same reason; try shapeColor = vec3(0.9) in this panel to see one pop.)
 //
 // One honest cost: the field is evaluated twice per pixel, because a second
 // question genuinely was asked; that is the price of direction. (In a
@@ -1298,17 +1319,18 @@ vec3 panelDropShadow(in vec2 tileUv, in vec2 tilePixel) {
   vec2  pos      = panelPos(tileUv, tilePixel);
   float onePixel = panelOnePixel(tilePixel);
 
-  vec2  shadowOffset  = vec2(10.0, -10.0) * onePixel;   // 10 screen pixels right, 10 down
-  float shapeScale    = fitToCell(2.0);                 // the panel as one big cell
-  float shadowDist    = sceneField(pos - shadowOffset, shapeScale);   // same question, asked from a shifted spot
-  float shadowPixels  = 8.0;                            // screen pixels per "about a third left"
-  float shadowFalloff = 1.0 / (shadowPixels * onePixel);
-  float shadow        = exp(-shadowFalloff * max(shadowDist, 0.0));   // 1 inside the copy, fading outside
-  float dist          = sceneField(pos, shapeScale);
+  vec2  shadowOffset   = vec2(10.0, -10.0) * onePixel;   // 10 screen pixels right, 10 down
+  float shapeScale     = fitToCell(2.0);                 // the panel as one big cell
+  float shadowDist     = sceneField(pos - shadowOffset, shapeScale);   // same question, asked from a shifted spot
+  float shadowPixels   = 8.0;                            // screen pixels per "about a third left"
+  float shadowFalloff  = 1.0 / (shadowPixels * onePixel);
+  float shadow         = exp(-shadowFalloff * max(shadowDist, 0.0));   // 1 inside the copy, fading outside
+  float shadowStrength = 0.6;                            // 0 = none, 1 = black; below 1 so the black shape stays readable
+  float dist           = sceneField(pos, shapeScale);
 
   vec3 color = bgColor;
-  color = mix(color, vec3(0.5), shadow);                     // 1. the soft copy, underneath (grey stand-in)
-  color = mix(shapeColor, color, coverage(dist, onePixel));  // 2. the real shape on top
+  color *= 1.0 - shadowStrength * shadow;                    // 1. the shadow takes light away, underneath
+  color  = mix(shapeColor, color, coverage(dist, onePixel)); // 2. the real shape on top
 
   return finishPanel(color, tileUv, tilePixel);
 }
