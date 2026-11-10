@@ -32,7 +32,7 @@
 //        |                |    union       |                |                |
 //        +----------------+----------------+----------------+----------------+
 //        | 12 repeat, all | 13 per-cell    | 14 drop shadow | 15 transforms  |
-//        |    together    |    identity    |                |    [next]      |
+//        |    together    |    identity    |                |    [step 1/4]  |
 //        |                |                |                |                |
 //        +----------------+----------------+----------------+----------------+
 //
@@ -1335,13 +1335,52 @@ vec3 panelDropShadow(in vec2 tileUv, in vec2 tilePixel) {
   return finishPanel(color, tileUv, tilePixel);
 }
 
-// * PANEL 15 — TRANSFORMS.  [next subject]
+// * PANEL 15 — TRANSFORMS (The Book of Shaders, chapter 8).  [in progress]
 //
-// Moving, scaling and rotating space before a shape is drawn, The Book of
-// Shaders chapter 8. Saved for after exercises 9 and 10: exercise 9's
-// rotation already needs it, so it may well start there.
+// Moving, rotating and scaling SPACE before a shape is drawn. Panel 13
+// already rotated each cell; this panel takes the three moves one at a
+// time, on one shape, and then shows why their order matters:
+//
+//   1. [done] move: the shape travels around a circle
+//   2.        rotate: it also spins around its own centre while travelling
+//   3.        scale: it pulses bigger and smaller
+//   4.        order: swap move and rotate, and see what changes
+//
+// * STEP 1 — MOVE
+//
+// The same "minus to move" as SHAPE_OFFSET and panel 14's shadow, except
+// the offset now changes every frame:
+//
+//     center = vec2(cos(iTime), sin(iTime)) * 0.4
+//     dist   = sceneField(pos - center, shapeScale)
+//
+// cos and sin of the same angle always land on a circle of radius 1, so
+// (cos t, sin t) is a point going round it; * 0.4 shrinks the circle to fit.
+//
+// Which way round: as iTime grows the point starts at the right, (1, 0),
+// and reaches the top, (0, 1), a quarter turn later. y points up here, so
+// right-to-top is ANTICLOCKWISE. (Swap to sin for x and cos for y, or use
+// -iTime, and it goes clockwise.)
+//
+// Does it tilt: no. pos - center only SLIDES the coordinates; nothing in it
+// turns them, so the shape keeps its orientation all the way round, like a
+// Ferris wheel car. Turning is a separate move, and that is step 2.
+//
+// Room to travel: shapeScale is halved, so the design reaches about 0.4
+// from its centre, and the orbit adds 0.4 more. 0.8 in all, inside the
+// panel's short side, which runs from -1 to 1.
 vec3 panelTransforms(in vec2 tileUv, in vec2 tilePixel) {
-  return finishPanel(todoColor, tileUv, tilePixel);
+  vec2  pos        = panelPos(tileUv, tilePixel);
+  float onePixel   = panelOnePixel(tilePixel);
+
+  float shapeScale = fitToCell(2.0) * 0.5;                  // half size, to leave room to travel
+  vec2  center     = vec2(cos(iTime), sin(iTime)) * 0.4;    // a point going round a circle
+  float dist       = sceneField(pos - center, shapeScale);  // MOVE: slide the coordinates
+
+  vec3 color = bgColor;
+  color += glowFrom(dist, onePixel) * outlineColor * GLOW_INTENSITY;   // light first
+  color  = mix(shapeColor, color, coverage(dist, onePixel));           // fill covers it
+  return finishPanel(color, tileUv, tilePixel);
 }
 
 // * DISPATCH — panel index in, colour out.
