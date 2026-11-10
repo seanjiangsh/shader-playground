@@ -32,7 +32,7 @@
 //        |                |    union       |                |                |
 //        +----------------+----------------+----------------+----------------+
 //        | 12 repeat, all | 13 per-cell    | 14 drop shadow | 15 transforms  |
-//        |    together    |    identity    |                |    [step 1/4]  |
+//        |    together    |    identity    |                |    [step 2/4]  |
 //        |                |                |                |                |
 //        +----------------+----------------+----------------+----------------+
 //
@@ -1335,6 +1335,21 @@ vec3 panelDropShadow(in vec2 tileUv, in vec2 tilePixel) {
   return finishPanel(color, tileUv, tilePixel);
 }
 
+// * ROTATE2D — a 2 x 2 matrix that turns a vec2 by angle (radians).
+//
+// The same four numbers panel 13 built inline, given a name because panel
+// 15 needs them twice. Which side of the * it goes on picks the direction:
+//
+//   rotate2d(a) * p     turns the SHAPE anticlockwise as a grows
+//   p * rotate2d(a)     turns it clockwise (what panel 13 does)
+//
+// Either way it turns around (0,0), and nothing else. Where (0,0) sits
+// when you call it is the whole story of panel 15's step 4.
+mat2 rotate2d(in float angle) {
+  return mat2(cos(angle), -sin(angle),
+              sin(angle),  cos(angle));
+}
+
 // * PANEL 15 — TRANSFORMS (The Book of Shaders, chapter 8).  [in progress]
 //
 // Moving, rotating and scaling SPACE before a shape is drawn. Panel 13
@@ -1342,7 +1357,7 @@ vec3 panelDropShadow(in vec2 tileUv, in vec2 tilePixel) {
 // time, on one shape, and then shows why their order matters:
 //
 //   1. [done] move: the shape travels around a circle
-//   2.        rotate: it also spins around its own centre while travelling
+//   2. [done] rotate: it also spins around its own centre while travelling
 //   3.        scale: it pulses bigger and smaller
 //   4.        order: swap move and rotate, and see what changes
 //
@@ -1369,13 +1384,32 @@ vec3 panelDropShadow(in vec2 tileUv, in vec2 tilePixel) {
 // Room to travel: shapeScale is halved, so the design reaches about 0.4
 // from its centre, and the orbit adds 0.4 more. 0.8 in all, inside the
 // panel's short side, which runs from -1 to 1.
+//
+// * STEP 2 — ROTATE, AROUND ITS OWN CENTRE
+//
+// Two moves on the coordinates, one after the other:
+//
+//     p = pos - center          MOVE: now (0,0) is the shape's own centre
+//     p = rotate2d(iTime) * p   ROTATE: turn around that (0,0)
+//
+// rotate2d always turns around (0,0). Moving first is what puts (0,0) at the
+// shape's centre, so the shape spins in place while it travels.
+//
+// Orbit and spin both use plain iTime, so they run at the same speed and the
+// same way round (anticlockwise, because the matrix is on the left). That
+// makes it TIDALLY LOCKED, like the Moon: the same side always faces the
+// middle of the panel. Relative to the orbit it is not turning at all; it
+// only looks like it spins because the orbit carries it round. Give the spin
+// its own speed, rotate2d(iTime * 3.0), and it visibly tumbles.
 vec3 panelTransforms(in vec2 tileUv, in vec2 tilePixel) {
   vec2  pos        = panelPos(tileUv, tilePixel);
   float onePixel   = panelOnePixel(tilePixel);
 
   float shapeScale = fitToCell(2.0) * 0.5;                  // half size, to leave room to travel
   vec2  center     = vec2(cos(iTime), sin(iTime)) * 0.4;    // a point going round a circle
-  float dist       = sceneField(pos - center, shapeScale);  // MOVE: slide the coordinates
+  vec2  p          = pos - center;                          // 1. MOVE: (0,0) is now the shape's centre
+        p          = rotate2d(iTime) * p;                   // 2. ROTATE: turn around that centre
+  float dist       = sceneField(p, shapeScale);
 
   vec3 color = bgColor;
   color += glowFrom(dist, onePixel) * outlineColor * GLOW_INTENSITY;   // light first
